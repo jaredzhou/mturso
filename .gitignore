@@ -1,0 +1,15 @@
+# MoonBit 构建产物
+_build/
+target/
+.mooncakes/
+
+# 注意：libs/ 故意不忽略 —— Turso 的 C 动态库随仓库分发（见 scripts/fetch-turso-lib.sh）
+
+# 临时数据库 / 日志（见 AGENTS.md）
+*.db
+*.db-log
+*.db-wal
+*.db-journal
+
+# RAG 资源缓存（模型与原生库，体积大，用脚本重新拉）
+.cache/

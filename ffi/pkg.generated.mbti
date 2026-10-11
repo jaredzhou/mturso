@@ -1,0 +1,22 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "jaredzhou/mturso/ffi"
+
+// Values
+pub fn close(Conn) -> Unit
+
+pub fn exec(Conn, Bytes) -> Int64
+
+pub fn last_error() -> Bytes
+
+pub fn open(Bytes) -> Conn
+
+pub fn query(Conn, Bytes) -> Bytes
+
+// Errors
+
+// Types and methods
+pub type Conn
+
+// Type aliases
+
+// Traits

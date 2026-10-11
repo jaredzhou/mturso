@@ -1,0 +1,13 @@
+// FFI 层：raw extern "c" 声明 + C stub。对外请用根包的高层 API。
+supported_targets = "+native"
+
+options(
+  "native-stub": [ "stub.c" ],
+  // 指向 Turso 的 C 动态库（已复制到仓库内 libs/）。
+  // 换机器/换仓库位置时跑 scripts/fetch-turso-lib.sh 重写此处。
+  link: {
+    "native": {
+      "cc-link-flags": "-L/home/jared/turso/libs -lturso_sync_sdk_kit -Wl,-rpath,/home/jared/turso/libs",
+    },
+  },
+)

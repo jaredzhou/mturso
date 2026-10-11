@@ -1,0 +1,100 @@
+# turso 研究仓库
+
+## 这是 `jaredzhou/mturso`：Turso 的 MoonBit 绑定
+
+模块名 `jaredzhou/mturso`，基于 Turso 官方 C ABI（`sdk-kit/turso.h`），native 目标。
+
+### 当前状态（最小可用）
+
+打开连接 → 执行语句 → 跑查询，**目前是同步调用**（在调用线程上阻塞）：
+
+```moonbit
+let conn = @mturso.Conn::open(":memory:")
+conn.exec("create table t(id integer primary key, name text)")
+conn.exec("insert into t(name) values ('alice')")
+let rows = conn.query("select id, name from t")   // "1\talice"
+conn.close()
+```
+
+### 编译与测试（已实测）
+
+```bash
+moon check --target native      # 类型检查
+moon test  --target native      # → Total tests: 1, passed: 1
+moon fmt && moon info           # 格式化 + 生成 pkg.generated.mbti
+```
+
+依赖 Turso 的 C 动态库，已经**复制到仓库内 `libs/`**（20MB，附 `.sha256`）。
+`moon.pkg` 和 `ffi/moon.pkg` 里的 `-L` / rpath 都指向它，所以测试**不需要设 `LD_LIBRARY_PATH`**。
+换机器或换仓库位置时重新跑一次：
+
+```bash
+bash scripts/fetch-turso-lib.sh   # 复制库 + 重写两个 moon.pkg 的链接路径
+```
+
+### 目录
+
+| 路径 | 内容 |
+| --- | --- |
+| `mturso.mbt` | facade：`Conn`、`MtursoError`、`Conn::open/exec/query/close` |
+| `ffi/` | **独立子包**：`extern "c"` 声明（`ffi.mbt`）+ C stub（`stub.c`）+ vendored `turso.h` |
+| `notes/turso-binding-guide.md` | 设计笔记：为什么这样分层、并发/async 的坑 |
+| `examples/` | Go SDK 示例 + C ABI 工作线程骨架 |
+
+### 下一步（TODO）
+
+- [ ] 把同步调用挪到**工作线程 + 门铃 pipe**，让 API 变成 `async fn`（`RawFdStream` await）；
+- [ ] 参数绑定（现在只能把字面量写进 SQL，没有 `bind` 参数）；
+- [ ] 结果类型化（现在只返回制表符分隔文本，`BLOB` 显示为 `<blob>`，`NULL` 显示为 `NULL`）；
+- [ ] Turso 特有扩展：`BEGIN CONCURRENT`、CDC、向量检索、sync。
+
+---
+
+## 研究笔记部分
+
+用来研究 [Turso](https://turso.tech) 的**用法**与**底层实现**。
+
+Turso 是 SQLite 的 Rust 重写（上游 `github.com/tursodatabase/turso`，早期代号 *limbo*）：兼容 SQLite 文件格式与 SQL 方言（`sqlite_version()` 报 3.50.4），并在其上增加了向量检索、全文索引、JSON/JSONB、自定义类型、物化视图、MVCC、静态加密、同步与 MCP server 等能力。
+
+## 本地已装好的东西
+
+- `tursodb` **0.8.2** —— 引擎 + 交互式 SQL shell，路径 `/home/jared/.turso/tursodb`（已在 `PATH`）。
+- Go **1.26.4**。
+
+## 快速开始
+
+```bash
+# 一条 SQL
+tursodb :memory: "select 1+1;"
+
+# 建表 + 查询（用临时目录，别把 .db 提交进仓库）
+d=$(mktemp -d)
+tursodb "$d/demo.db" \
+  "create table t(id integer primary key, name text);
+   insert into t(name) values ('alice'),('bob');
+   select * from t;"
+
+# 内置示例脚本（已实测）
+bash examples/tursodb-basics.sh
+```
+
+## 工作区结构
+
+| 路径 | 内容 |
+| --- | --- |
+| `AGENTS.md` | 给编码 agent 的仓库说明：环境、约定、命令、路线图、坑 |
+| `notes/architecture.md` | 引擎底层实现速览（存储 / WAL / MVCC / 各扩展） |
+| `notes/source-walkthrough.md` | 源码走读（tag v0.8.2）：编译管线、异步 I/O 模型、存储格式、MVCC |
+| `notes/go-sdk.md` | Go SDK 接入笔记（已实测） |
+| `notes/turso-binding-guide.md` | 绑定开发参考：Go SDK 实测笔记全文 + C API / MoonBit FFI 映射 + 与 `jaredzhou/moonpg` 对齐的接口设计 |
+| `examples/tursodb-basics.sh` | 可直接运行的 `tursodb` 基础示例 |
+| `examples/go-sdk/` | 官方 Go SDK（`turso.tech/database/tursogo`）综合示例：`basic`/`cdc`/`vector`/`concurrent`/`mvcc`/`sync`/`rag`（RAG 支持中英文语料） |
+| `scripts/fetch-source.sh` | 克隆与本地引擎对齐的 Turso 源码（默认 tag v0.8.2） |
+| `scripts/fetch-rag-*.sh`、`build-llama-lib.sh` | RAG 演示所需的模型 / 中英语料 / 原生 embedding 库 |
+
+## 现状与限制
+
+- **网络在沙箱内默认阻断**，但提权后可访问外网，所以拉依赖 / clone 源码需要提权执行一次。
+- **Go SDK 已跑通**：`turso.tech/database/tursogo`（驱动名 `turso`）；跑示例用 `cd examples/go-sdk && GOCACHE=/tmp/gocache go run .`。
+- **源码已就位**：`/tmp/turso-src`（tag v0.8.2）。
+- 仓库尚未初始化 git（`.git/` 为空且不可写），需要时请先确认。

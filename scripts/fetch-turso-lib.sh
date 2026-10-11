@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# 把 Turso 的 C 动态库复制到仓库内 libs/，并把 moon.pkg 里的链接路径改成本仓库路径。
+#
+# 不需要联网：库随 Go SDK 分发（turso-go-platform-libs），本机拉过一次 Go 依赖就有。
+# 也可以手动指定源文件：
+#   TURSO_LIB_SRC=/path/to/libturso_sync_sdk_kit.so bash scripts/fetch-turso-lib.sh
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+LIBS_DIR="$REPO_ROOT/libs"
+mkdir -p "$LIBS_DIR"
+
+case "$(uname -s)/$(uname -m)" in
+  Linux/x86_64)  SUB=linux_amd64;  LIB=libturso_sync_sdk_kit.so ;;
+  Linux/aarch64) SUB=linux_arm64;  LIB=libturso_sync_sdk_kit.so ;;
+  Darwin/x86_64) SUB=darwin_amd64; LIB=libturso_sync_sdk_kit.dylib ;;
+  Darwin/arm64)  SUB=darwin_arm64; LIB=libturso_sync_sdk_kit.dylib ;;
+  *) echo "不支持的平台: $(uname -s)/$(uname -m)" >&2; exit 1 ;;
+esac
+
+SRC="${TURSO_LIB_SRC:-}"
+if [ -z "$SRC" ]; then
+  MODCACHE="${GOMODCACHE:-$(go env GOMODCACHE 2>/dev/null || true)}"
+  SRC="$MODCACHE/github.com/tursodatabase/turso-go-platform-libs@v0.8.2/libs/$SUB/$LIB"
+fi
+if [ ! -f "$SRC" ]; then
+  echo "找不到 Turso 库: $SRC" >&2
+  echo "请用 TURSO_LIB_SRC=<path> 指定，或先拉取 Go 依赖（go get turso.tech/database/tursogo）。" >&2
+  exit 1
+fi
+
+cp -f "$SRC" "$LIBS_DIR/$LIB"
+echo "已复制: $LIBS_DIR/$LIB"
+
+# 只替换 cc-link-flags 那一行的值（链接参数必须挂在根包与 ffi 包两处）
+FLAGS="-L$LIBS_DIR -lturso_sync_sdk_kit -Wl,-rpath,$LIBS_DIR"
+for pkg in "$REPO_ROOT/moon.pkg" "$REPO_ROOT/ffi/moon.pkg"; do
+  [ -f "$pkg" ] || continue
+  sed -i -E "s#(\"cc-link-flags\": \")[^\"]*(\")#\1$FLAGS\2#" "$pkg"
+  echo "已更新: ${pkg#"$REPO_ROOT"/}"
+done
+
+echo
+echo "验证：moon test --target native"

@@ -1,0 +1,26 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "jaredzhou/mturso"
+
+import {
+  "jaredzhou/mturso/ffi",
+}
+
+// Values
+
+// Errors
+pub suberror MtursoError {
+  MtursoError(String)
+}
+
+// Types and methods
+pub struct Conn {
+  raw : @ffi.Conn
+}
+pub fn Conn::close(Self) -> Unit
+pub fn Conn::exec(Self, String) -> Int64 raise MtursoError
+pub fn Conn::open(String) -> Self raise MtursoError
+pub fn Conn::query(Self, String) -> String raise MtursoError
+
+// Type aliases
+
+// Traits
