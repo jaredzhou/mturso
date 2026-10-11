@@ -708,6 +708,11 @@ pub async_io: bool,
 
 推荐架构（各连接一个 actor，互不共享 Turso 句柄）：
 
+> ✅ **已在 `jaredzhou/mturso` 落地**（见仓库根的 `mturso.mbt` / `ffi/stub.c`）：
+> 每连接一个工作线程 + 门铃 pipe，`query`/`exec` 是 `async fn`；测试
+> `concurrent queries do not block the event loop` 断言了「sleep 任务在重查询仍在跑时就醒来」。
+> 下面是最初的设计草图。
+
 ```
 MoonBit task ──(请求)──▶ C stub 队列 ──▶ 工作线程：turso_statement_step / run_io（阻塞）
       ▲                                              │

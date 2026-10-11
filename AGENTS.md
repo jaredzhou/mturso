@@ -11,7 +11,8 @@
 
 - 模块名 `jaredzhou/mturso`（`moon.mod`），**native-only**（链接 Turso 的 C ABI）。
 - `mturso.mbt` 是 facade；**FFI 单独成包**：`ffi/`（`ffi.mbt` 放 `extern "c"` 声明、`stub.c` 是 C 实现、`turso.h` 是 vendored 的 C ABI 头）。
-- 现状：`Conn::open / exec / query / close`，**同步调用**（在调用线程上阻塞）。下一步是改成 `async fn`（工作线程 + 门铃 pipe + `RawFdStream`），设计见 `notes/turso-binding-guide.md` §6。
+- 现状：`Database::open` → 多个 `Connection`（`db.connect()`）；`query` / `exec` 是 **async**（每连接一个工作线程 + 门铃 pipe，事件循环不被阻塞），另有 `query_blocking` / `exec_blocking` 同步版本。设计见 `notes/turso-binding-guide.md` §6。
+- MoonBit 工具链：**0.1.20260920**（core `0.10.14`），依赖 `moonbitlang/async@0.22.4`。注意 async 0.22.4 需要新的 core（旧 core 缺 `eprintln`）——工具链已用 `moon upgrade` 升过。
 - 改动 FFI 或 C stub 后必须跑：`moon check --target native`、`moon test --target native`；收尾跑 `moon fmt && moon info`（检查 `pkg.generated.mbti` 的 diff）。
 
 ## 环境（2026-10-11 实测，改动前请复验）

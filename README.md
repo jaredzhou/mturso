@@ -4,17 +4,27 @@
 
 模块名 `jaredzhou/mturso`，基于 Turso 官方 C ABI（`sdk-kit/turso.h`），native 目标。
 
-### 当前状态（最小可用）
+### 当前状态
 
-打开连接 → 执行语句 → 跑查询，**目前是同步调用**（在调用线程上阻塞）：
+`Database` → 可开**多个** `Connection`；`query` / `exec` 是 **async**（语句在每连接的工作线程上执行，
+事件循环不被阻塞），另有 `query_blocking` / `exec_blocking` 同步版本可用（不需要 async 运行时）。
 
 ```moonbit
-let conn = @mturso.Conn::open(":memory:")
-conn.exec("create table t(id integer primary key, name text)")
-conn.exec("insert into t(name) values ('alice')")
-let rows = conn.query("select id, name from t")   // "1\talice"
-conn.close()
+let db = @mturso.Database::open(":memory:")
+let c1 = db.connect()
+let c2 = db.connect()          // 一个库可以开多个连接
+
+c1.exec("create table t(id integer primary key, v integer)")
+c1.exec("insert into t(v) values (1), (2)")
+let rows = c2.query("select id, v from t")   // "1\t1\n2\t2"
+
+c1.close(); c2.close(); db.close()
 ```
+
+**并发模型（已实测）**：每条连接自带一个工作线程 + 一个「门铃」pipe。`query` 提交后把语句交给工作线程
+（阻塞只发生在那里），完成后工作线程往 pipe 写 1 字节，MoonBit 侧 `RawFdStream::read` 挂起等待 ——
+**事件循环线程全程可以继续跑别的任务**。测试 `concurrent queries do not block the event loop`
+就是断言这件事（一个 sleep 任务在重查询还在跑时就已经醒来了）。
 
 ### 编译与测试（已实测）
 
@@ -36,16 +46,16 @@ bash scripts/fetch-turso-lib.sh   # 复制库 + 重写两个 moon.pkg 的链接�
 
 | 路径 | 内容 |
 | --- | --- |
-| `mturso.mbt` | facade：`Conn`、`MtursoError`、`Conn::open/exec/query/close` |
+| `mturso.mbt` | facade：`Database`、`Connection`、`MtursoError`；`open/connect`、`query`/`exec`（async）、`query_blocking`/`exec_blocking`、`close` |
 | `ffi/` | **独立子包**：`extern "c"` 声明（`ffi.mbt`）+ C stub（`stub.c`）+ vendored `turso.h` |
 | `notes/turso-binding-guide.md` | 设计笔记：为什么这样分层、并发/async 的坑 |
 | `examples/` | Go SDK 示例 + C ABI 工作线程骨架 |
 
 ### 下一步（TODO）
 
-- [ ] 把同步调用挪到**工作线程 + 门铃 pipe**，让 API 变成 `async fn`（`RawFdStream` await）；
 - [ ] 参数绑定（现在只能把字面量写进 SQL，没有 `bind` 参数）；
 - [ ] 结果类型化（现在只返回制表符分隔文本，`BLOB` 显示为 `<blob>`，`NULL` 显示为 `NULL`）；
+- [ ] 取消/超时：任务被取消时要与工作线程的门铃对齐，避免残留字节导致后续读错位；
 - [ ] Turso 特有扩展：`BEGIN CONCURRENT`、CDC、向量检索、sync。
 
 ---

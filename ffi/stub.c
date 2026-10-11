@@ -5,25 +5,36 @@
 //   两者都是 GC 托管的外部对象，各自的 finalizer 负责释放原生资源。
 //   ⚠️ MoonBit 侧必须让 Connection 持有 Database 的引用，否则 GC 可能先回收 Database。
 //
-// 其它约定（见 notes/turso-binding-guide.md）：
-//   1. C 侧从不向 MoonBit 返回 NULL；失败通过 `mturso_last_error()` 报告（空串 = 成功）。
-//   2. MoonBit 的 Bytes 由运行时保证 NUL 结尾，可直接当 const char* 用。
+// 同步 vs 异步：
+//   - `*_exec` / `*_query`：在调用线程上直接跑（阻塞）。适合不需要 async 的场合。
+//   - `submit_*` + `take_*`：把语句交给**每连接一个工作线程**执行，完成后往该连接的
+//     门铃 pipe 写 1 字节；MoonBit 侧 await 门铃（RawFdStream）后再 take 结果。
+//     这样阻塞只发生在工作线程上，事件循环线程不被卡住。
+//
+// 约定（见 notes/turso-binding-guide.md）：
+//   1. C 侧从不向 MoonBit 返回 NULL；失败通过 `mturso_last_error()`（全局，给 open/connect）
+//      和 `mturso_conn_last_error()`（每连接，给 job）报告。空串 = 成功。
+//   2. **工作线程只碰 C 内存**：提交时把 SQL 拷贝到 C 堆，绝不引用 MoonBit 对象；
+//      结果也在 C 堆上，由 MoonBit 线程在 take 时拷进 Bytes。
 //   3. 同一个语句不要混用 step / execute（这里统一用 step）。
-//   4. 目前所有调用都在发起线程上同步完成；下一步会挪到工作线程 + 门铃 pipe。
+#include <errno.h>
+#include <fcntl.h>
 #include <moonbit.h>
+#include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "turso.h"
 
 // ---------------------------------------------------------------------------
-// 全局初始化与错误槽
+// 全局初始化与全局错误槽（只给 open / connect 用；job 的错误在连接里）
 // ---------------------------------------------------------------------------
 
 static int g_setup_state = 0; // 0 = 未初始化, 1 = 成功, -1 = 失败
-static char g_err[2048];      // 最近一次错误；单线程使用，无需加锁
+static char g_err[2048];
 
 static void set_err(const char *msg) {
   snprintf(g_err, sizeof(g_err), "%s", msg != NULL ? msg : "unknown error");
@@ -59,7 +70,6 @@ static moonbit_bytes_t bytes_dup(const char *src, int32_t len) {
 
 static moonbit_bytes_t bytes_empty(void) { return moonbit_make_bytes(0, 0); }
 
-// 可增长字符串缓冲（只在 C 堆上分配，不碰 MoonBit GC）
 typedef struct {
   char *buf;
   size_t len;
@@ -82,102 +92,13 @@ static void sb_put(strbuf_t *sb, const char *s, size_t n) {
 
 static void sb_puts(strbuf_t *sb, const char *s) { sb_put(sb, s, strlen(s)); }
 
-// ---------------------------------------------------------------------------
-// Database
-// ---------------------------------------------------------------------------
-
-typedef struct {
-  const turso_database_t *db;
-} mturso_db_t;
-
-static void db_finalize(void *self) {
-  mturso_db_t *h = (mturso_db_t *)self;
-  if (h->db != NULL) {
-    turso_database_deinit(h->db);
-    h->db = NULL;
-  }
-  // 容器本身由 GC 管理，不要 free
-}
-
-MOONBIT_FFI_EXPORT
-mturso_db_t *mturso_db_open(moonbit_bytes_t path) {
-  clear_err();
-  ensure_setup();
-
-  mturso_db_t *h = (mturso_db_t *)moonbit_make_external_object(db_finalize, sizeof(mturso_db_t));
-  memset(h, 0, sizeof(mturso_db_t));
-  if (g_setup_state != 1) {
-    if (g_err[0] == '\0') {
-      set_err("turso_setup failed");
-    }
-    return h;
-  }
-
-  turso_database_config_t cfg = {0};
-  cfg.path = (const char *)path; // Bytes 保证 NUL 结尾
-  cfg.async_io = 0;              // 同步模式：库在调用线程上推进 I/O
-
-  const char *err = NULL;
-  if (turso_database_new(&cfg, &h->db, &err) != TURSO_OK) {
-    set_err(err);
-    return h;
-  }
-  if (turso_database_open(h->db, &err) != TURSO_OK) {
-    set_err(err);
-  }
-  return h;
-}
-
-MOONBIT_FFI_EXPORT
-void mturso_db_close(mturso_db_t *db) {
-  if (db == NULL || db->db == NULL) {
-    return;
-  }
-  turso_database_deinit(db->db);
-  db->db = NULL;
+static void set_errbuf(char *buf, size_t len, const char *msg) {
+  snprintf(buf, len, "%s", msg != NULL ? msg : "unknown error");
 }
 
 // ---------------------------------------------------------------------------
-// Connection（一个 Database 可以开多个）
+// 语句执行（C 字符串接口，供同步路径与工作线程共用）
 // ---------------------------------------------------------------------------
-
-typedef struct {
-  turso_connection_t *conn;
-} mturso_conn_t;
-
-static void conn_finalize(void *self) {
-  mturso_conn_t *h = (mturso_conn_t *)self;
-  if (h->conn != NULL) {
-    turso_connection_deinit(h->conn);
-    h->conn = NULL;
-  }
-}
-
-MOONBIT_FFI_EXPORT
-mturso_conn_t *mturso_db_connect(mturso_db_t *db) {
-  clear_err();
-  mturso_conn_t *h =
-      (mturso_conn_t *)moonbit_make_external_object(conn_finalize, sizeof(mturso_conn_t));
-  memset(h, 0, sizeof(mturso_conn_t));
-  if (db == NULL || db->db == NULL) {
-    set_err("database is not open");
-    return h;
-  }
-  const char *err = NULL;
-  if (turso_database_connect(db->db, &h->conn, &err) != TURSO_OK) {
-    set_err(err);
-  }
-  return h;
-}
-
-MOONBIT_FFI_EXPORT
-void mturso_conn_close(mturso_conn_t *conn) {
-  if (conn == NULL || conn->conn == NULL) {
-    return;
-  }
-  turso_connection_deinit(conn->conn);
-  conn->conn = NULL;
-}
 
 // 用 step 把语句跑到 TURSO_DONE（不混用 execute）
 static int step_to_done(turso_statement_t *stmt, const char **err) {
@@ -199,45 +120,32 @@ static int step_to_done(turso_statement_t *stmt, const char **err) {
   }
 }
 
-MOONBIT_FFI_EXPORT
-int64_t mturso_conn_exec(mturso_conn_t *conn, moonbit_bytes_t sql) {
-  clear_err();
-  if (conn == NULL || conn->conn == NULL) {
-    set_err("connection is not open");
-    return -1;
-  }
-
+// 执行非查询语句；成功返回受影响行数，失败返回 -1 并写 errbuf
+static int64_t do_exec(turso_connection_t *conn, const char *sql, char *errbuf, size_t errlen) {
   const char *err = NULL;
   turso_statement_t *stmt = NULL;
-  if (turso_connection_prepare_single(conn->conn, (const char *)sql, &stmt, &err) != TURSO_OK) {
-    set_err(err);
+  if (turso_connection_prepare_single(conn, sql, &stmt, &err) != TURSO_OK) {
+    set_errbuf(errbuf, errlen, err);
     return -1;
   }
-
   int rc = step_to_done(stmt, &err);
   int64_t changes = turso_statement_n_change(stmt);
   turso_statement_deinit(stmt);
-
   if (rc != 0) {
-    set_err(err);
+    set_errbuf(errbuf, errlen, err);
     return -1;
   }
   return changes;
 }
 
-MOONBIT_FFI_EXPORT
-moonbit_bytes_t mturso_conn_query(mturso_conn_t *conn, moonbit_bytes_t sql) {
-  clear_err();
-  if (conn == NULL || conn->conn == NULL) {
-    set_err("connection is not open");
-    return bytes_empty();
-  }
-
+// 执行查询，结果渲染成制表符/换行分隔的文本（malloc 出来，调用方 free）
+static char *do_query(turso_connection_t *conn, const char *sql, int32_t *out_len, char *errbuf,
+                      size_t errlen) {
   const char *err = NULL;
   turso_statement_t *stmt = NULL;
-  if (turso_connection_prepare_single(conn->conn, (const char *)sql, &stmt, &err) != TURSO_OK) {
-    set_err(err);
-    return bytes_empty();
+  if (turso_connection_prepare_single(conn, sql, &stmt, &err) != TURSO_OK) {
+    set_errbuf(errbuf, errlen, err);
+    return NULL;
   }
 
   strbuf_t sb = {0};
@@ -260,7 +168,6 @@ moonbit_bytes_t mturso_conn_query(mturso_conn_t *conn, moonbit_bytes_t sql) {
       failed = 1;
       break;
     }
-
     if (!first_row) {
       sb_put(&sb, "\n", 1);
     }
@@ -306,14 +213,368 @@ moonbit_bytes_t mturso_conn_query(mturso_conn_t *conn, moonbit_bytes_t sql) {
   turso_statement_deinit(stmt);
 
   if (failed) {
-    set_err(err);
+    set_errbuf(errbuf, errlen, err);
     free(sb.buf);
-    return bytes_empty();
+    return NULL;
+  }
+  if (sb.buf == NULL) {
+    sb.buf = (char *)calloc(1, 1);
+  }
+  *out_len = (int32_t)sb.len;
+  return sb.buf;
+}
+
+// ---------------------------------------------------------------------------
+// Database
+// ---------------------------------------------------------------------------
+
+typedef struct {
+  const turso_database_t *db;
+} mturso_db_t;
+
+static void db_finalize(void *self) {
+  mturso_db_t *h = (mturso_db_t *)self;
+  if (h->db != NULL) {
+    turso_database_deinit(h->db);
+    h->db = NULL;
+  }
+}
+
+MOONBIT_FFI_EXPORT
+mturso_db_t *mturso_db_open(moonbit_bytes_t path) {
+  clear_err();
+  ensure_setup();
+
+  mturso_db_t *h = (mturso_db_t *)moonbit_make_external_object(db_finalize, sizeof(mturso_db_t));
+  memset(h, 0, sizeof(mturso_db_t));
+  if (g_setup_state != 1) {
+    if (g_err[0] == '\0') {
+      set_err("turso_setup failed");
+    }
+    return h;
   }
 
-  moonbit_bytes_t out = bytes_dup(sb.buf != NULL ? sb.buf : "", (int32_t)sb.len);
-  free(sb.buf);
+  turso_database_config_t cfg = {0};
+  cfg.path = (const char *)path; // Bytes 保证 NUL 结尾
+  cfg.async_io = 0;              // 同步模式：谁调谁推进 I/O
+
+  const char *err = NULL;
+  if (turso_database_new(&cfg, &h->db, &err) != TURSO_OK) {
+    set_err(err);
+    return h;
+  }
+  if (turso_database_open(h->db, &err) != TURSO_OK) {
+    set_err(err);
+  }
+  return h;
+}
+
+MOONBIT_FFI_EXPORT
+void mturso_db_close(mturso_db_t *db) {
+  if (db == NULL || db->db == NULL) {
+    return;
+  }
+  turso_database_deinit(db->db);
+  db->db = NULL;
+}
+
+// ---------------------------------------------------------------------------
+// Connection（一个 Database 可以开多个；每个连接自带一个工作线程 + 门铃）
+// ---------------------------------------------------------------------------
+
+typedef struct {
+  turso_connection_t *conn;
+
+  // 工作线程与任务槽
+  pthread_t worker;
+  int worker_started;
+  pthread_mutex_t mu;
+  pthread_cond_t cv;
+  int has_job;
+  int shutdown;
+  int job_is_query;
+  char *job_sql;       // C 堆（从 MoonBit 拷贝），worker 负责 free
+  int job_done;
+  char *result;        // worker 写的查询结果（C 堆）
+  int32_t result_len;
+  int64_t changes;     // exec 的受影响行数
+  int failed;
+  char err[1024];      // 每连接错误：worker 写、MoonBit 线程读
+
+  // 门铃：worker 写 1 字节，MoonBit 侧把 bell_r 包成 RawFdStream
+  int bell_r;          // -1 = 已交给 MoonBit（或未创建）
+  int bell_w;
+} mturso_conn_t;
+
+static void *conn_worker(void *arg) {
+  mturso_conn_t *h = (mturso_conn_t *)arg;
+  for (;;) {
+    pthread_mutex_lock(&h->mu);
+    while (!h->has_job && !h->shutdown) {
+      pthread_cond_wait(&h->cv, &h->mu);
+    }
+    if (h->shutdown && !h->has_job) {
+      pthread_mutex_unlock(&h->mu);
+      break;
+    }
+    char *sql = h->job_sql;
+    int is_query = h->job_is_query;
+    h->job_sql = NULL;
+    h->has_job = 0;
+    pthread_mutex_unlock(&h->mu);
+
+    // 阻塞执行 —— 只发生在工作线程上
+    char errbuf[1024] = {0};
+    char *result = NULL;
+    int32_t result_len = 0;
+    int64_t changes = 0;
+    int failed = 0;
+    if (h->conn == NULL) {
+      set_errbuf(errbuf, sizeof(errbuf), "connection is not open");
+      failed = 1;
+    } else if (is_query) {
+      result = do_query(h->conn, sql, &result_len, errbuf, sizeof(errbuf));
+      failed = (result == NULL);
+    } else {
+      changes = do_exec(h->conn, sql, errbuf, sizeof(errbuf));
+      failed = (changes < 0);
+    }
+    free(sql);
+
+    pthread_mutex_lock(&h->mu);
+    h->result = result;
+    h->result_len = result_len;
+    h->changes = changes;
+    h->failed = failed;
+    snprintf(h->err, sizeof(h->err), "%s", errbuf);
+    h->job_done = 1;
+    pthread_mutex_unlock(&h->mu);
+
+    // 敲门铃（先发布结果，再敲）
+    char b = 1;
+    ssize_t n = write(h->bell_w, &b, 1);
+    (void)n;
+  }
+  return NULL;
+}
+
+static void conn_finalize(void *self) {
+  mturso_conn_t *h = (mturso_conn_t *)self;
+
+  if (h->worker_started) {
+    pthread_mutex_lock(&h->mu);
+    h->shutdown = 1;
+    pthread_cond_signal(&h->cv);
+    pthread_mutex_unlock(&h->mu);
+    pthread_join(h->worker, NULL);
+    h->worker_started = 0;
+  }
+  if (h->job_sql != NULL) free(h->job_sql);
+  if (h->result != NULL) free(h->result);
+  if (h->bell_w >= 0) close(h->bell_w);
+  if (h->bell_r >= 0) close(h->bell_r); // 若已交给 MoonBit 则是 -1
+  if (h->conn != NULL) {
+    turso_connection_deinit(h->conn);
+    h->conn = NULL;
+  }
+  pthread_mutex_destroy(&h->mu);
+  pthread_cond_destroy(&h->cv);
+}
+
+MOONBIT_FFI_EXPORT
+mturso_conn_t *mturso_db_connect(mturso_db_t *db) {
+  clear_err();
+  mturso_conn_t *h =
+      (mturso_conn_t *)moonbit_make_external_object(conn_finalize, sizeof(mturso_conn_t));
+  memset(h, 0, sizeof(mturso_conn_t));
+  h->bell_r = -1;
+  h->bell_w = -1;
+  pthread_mutex_init(&h->mu, NULL);
+  pthread_cond_init(&h->cv, NULL);
+
+  if (db == NULL || db->db == NULL) {
+    set_err("database is not open");
+    return h;
+  }
+  const char *err = NULL;
+  if (turso_database_connect(db->db, &h->conn, &err) != TURSO_OK) {
+    set_err(err);
+    return h;
+  }
+
+  // 门铃 pipe：读端设成非阻塞，交给 MoonBit 后走事件循环（epoll）
+  int fds[2];
+  if (pipe(fds) == 0) {
+    h->bell_r = fds[0];
+    h->bell_w = fds[1];
+    int flags = fcntl(h->bell_r, F_GETFL, 0);
+    if (flags >= 0) {
+      fcntl(h->bell_r, F_SETFL, flags | O_NONBLOCK);
+    }
+  }
+
+  if (pthread_create(&h->worker, NULL, conn_worker, h) == 0) {
+    h->worker_started = 1;
+  } else {
+    set_err("failed to start worker thread");
+  }
+  return h;
+}
+
+MOONBIT_FFI_EXPORT
+void mturso_conn_close(mturso_conn_t *conn) {
+  if (conn == NULL || conn->conn == NULL) {
+    return;
+  }
+  turso_connection_deinit(conn->conn);
+  conn->conn = NULL;
+}
+
+// ---- 同步路径（在调用线程上跑） ----
+
+MOONBIT_FFI_EXPORT
+int64_t mturso_conn_exec(mturso_conn_t *conn, moonbit_bytes_t sql) {
+  clear_err();
+  if (conn == NULL || conn->conn == NULL) {
+    set_err("connection is not open");
+    return -1;
+  }
+  char errbuf[1024] = {0};
+  int64_t changes = do_exec(conn->conn, (const char *)sql, errbuf, sizeof(errbuf));
+  if (changes < 0) {
+    set_err(errbuf);
+  }
+  return changes;
+}
+
+MOONBIT_FFI_EXPORT
+moonbit_bytes_t mturso_conn_query(mturso_conn_t *conn, moonbit_bytes_t sql) {
+  clear_err();
+  if (conn == NULL || conn->conn == NULL) {
+    set_err("connection is not open");
+    return bytes_empty();
+  }
+  char errbuf[1024] = {0};
+  int32_t len = 0;
+  char *result = do_query(conn->conn, (const char *)sql, &len, errbuf, sizeof(errbuf));
+  if (result == NULL) {
+    set_err(errbuf);
+    return bytes_empty();
+  }
+  moonbit_bytes_t out = bytes_dup(result, len);
+  free(result);
   return out;
+}
+
+// ---- 异步路径（提交给本连接的工作线程；完成后敲门铃） ----
+
+static void submit_job(mturso_conn_t *conn, moonbit_bytes_t sql, int is_query) {
+  if (conn == NULL || conn->conn == NULL) {
+    set_err("connection is not open");
+    return;
+  }
+  if (!conn->worker_started) {
+    set_err("worker thread is not running");
+    return;
+  }
+  // 关键：把 SQL 拷贝到 C 堆 —— 工作线程绝不能引用 MoonBit 内存
+  char *copy = strdup((const char *)sql);
+  pthread_mutex_lock(&conn->mu);
+  if (conn->has_job) {
+    pthread_mutex_unlock(&conn->mu);
+    free(copy);
+    set_err("a job is already in flight on this connection");
+    return;
+  }
+  if (conn->result != NULL) {
+    free(conn->result);
+    conn->result = NULL;
+  }
+  conn->job_sql = copy;
+  conn->job_is_query = is_query;
+  conn->job_done = 0;
+  conn->failed = 0;
+  conn->err[0] = '\0';
+  conn->has_job = 1;
+  pthread_cond_signal(&conn->cv);
+  pthread_mutex_unlock(&conn->mu);
+}
+
+MOONBIT_FFI_EXPORT
+void mturso_submit_query(mturso_conn_t *conn, moonbit_bytes_t sql) {
+  clear_err();
+  submit_job(conn, sql, 1);
+}
+
+MOONBIT_FFI_EXPORT
+void mturso_submit_exec(mturso_conn_t *conn, moonbit_bytes_t sql) {
+  clear_err();
+  submit_job(conn, sql, 0);
+}
+
+// 把门铃读端交给 MoonBit（RawFdStream 接管所有权）。只能拿一次。
+MOONBIT_FFI_EXPORT
+int32_t mturso_conn_bell_fd(mturso_conn_t *conn) {
+  clear_err();
+  if (conn == NULL || conn->bell_r < 0) {
+    set_err("doorbell is not available");
+    return -1;
+  }
+  int32_t fd = conn->bell_r;
+  conn->bell_r = -1; // 所有权已转移
+  return fd;
+}
+
+// 取回查询结果（在 MoonBit 线程上把 C 堆的结果拷进 Bytes）
+MOONBIT_FFI_EXPORT
+moonbit_bytes_t mturso_take_query(mturso_conn_t *conn) {
+  if (conn == NULL) {
+    set_err("connection is null");
+    return bytes_empty();
+  }
+  pthread_mutex_lock(&conn->mu);
+  int failed = conn->failed;
+  char errbuf[1024];
+  snprintf(errbuf, sizeof(errbuf), "%s", conn->err);
+  char *result = conn->result;
+  int32_t len = conn->result_len;
+  conn->result = NULL;
+  conn->result_len = 0;
+  conn->job_done = 0;
+  pthread_mutex_unlock(&conn->mu);
+
+  if (failed) {
+    if (result != NULL) free(result);
+    set_err(errbuf);
+    return bytes_empty();
+  }
+  moonbit_bytes_t out = bytes_dup(result != NULL ? result : "", len);
+  if (result != NULL) free(result);
+  clear_err();
+  return out;
+}
+
+// 取回 exec 的受影响行数
+MOONBIT_FFI_EXPORT
+int64_t mturso_take_exec(mturso_conn_t *conn) {
+  if (conn == NULL) {
+    set_err("connection is null");
+    return -1;
+  }
+  pthread_mutex_lock(&conn->mu);
+  int failed = conn->failed;
+  char errbuf[1024];
+  snprintf(errbuf, sizeof(errbuf), "%s", conn->err);
+  int64_t changes = conn->changes;
+  conn->job_done = 0;
+  pthread_mutex_unlock(&conn->mu);
+
+  if (failed) {
+    set_err(errbuf);
+    return -1;
+  }
+  clear_err();
+  return changes;
 }
 
 MOONBIT_FFI_EXPORT
