@@ -1,13 +1,15 @@
 // mturso 的 C 侧：Turso C ABI 的 MoonBit 适配层。
 //
-// 设计约定（见 notes/turso-binding-guide.md）：
-//   1. C 侧从不向 MoonBit 返回 NULL 指针；失败通过 `mturso_last_error()` 报告
-//      （空串 = 成功）。这样 MoonBit 侧不需要做空指针判断。
-//   2. 连接句柄是 GC 托管的外部对象，finalizer 负责释放 Turso 资源，
-//      所以"忘记 close"也不会泄漏原生资源。
-//   3. MoonBit 的 Bytes 由运行时保证 NUL 结尾，可直接当 const char* 用。
-//   4. 目前是同步调用：所有 Turso 调用都发生在发起调用的线程上。
-//      下一步会挪到工作线程 + 门铃 pipe（届时 worker 只许碰 C 内存）。
+// 句柄模型（对齐 Go 绑定的用法）：
+//   一个 Database 可以 connect 出**多个** Connection（`turso_database_connect` 可重复调用）。
+//   两者都是 GC 托管的外部对象，各自的 finalizer 负责释放原生资源。
+//   ⚠️ MoonBit 侧必须让 Connection 持有 Database 的引用，否则 GC 可能先回收 Database。
+//
+// 其它约定（见 notes/turso-binding-guide.md）：
+//   1. C 侧从不向 MoonBit 返回 NULL；失败通过 `mturso_last_error()` 报告（空串 = 成功）。
+//   2. MoonBit 的 Bytes 由运行时保证 NUL 结尾，可直接当 const char* 用。
+//   3. 同一个语句不要混用 step / execute（这里统一用 step）。
+//   4. 目前所有调用都在发起线程上同步完成；下一步会挪到工作线程 + 门铃 pipe。
 #include <moonbit.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -17,7 +19,7 @@
 #include "turso.h"
 
 // ---------------------------------------------------------------------------
-// 全局初始化（进程内一次）与错误槽
+// 全局初始化与错误槽
 // ---------------------------------------------------------------------------
 
 static int g_setup_state = 0; // 0 = 未初始化, 1 = 成功, -1 = 失败
@@ -81,44 +83,29 @@ static void sb_put(strbuf_t *sb, const char *s, size_t n) {
 static void sb_puts(strbuf_t *sb, const char *s) { sb_put(sb, s, strlen(s)); }
 
 // ---------------------------------------------------------------------------
-// 连接句柄
+// Database
 // ---------------------------------------------------------------------------
 
 typedef struct {
   const turso_database_t *db;
-  turso_connection_t *conn;
-} mturso_conn_t;
+} mturso_db_t;
 
-static void conn_finalize(void *self) {
-  mturso_conn_t *c = (mturso_conn_t *)self;
-  if (c->conn != NULL) {
-    turso_connection_deinit(c->conn);
-    c->conn = NULL;
+static void db_finalize(void *self) {
+  mturso_db_t *h = (mturso_db_t *)self;
+  if (h->db != NULL) {
+    turso_database_deinit(h->db);
+    h->db = NULL;
   }
-  if (c->db != NULL) {
-    turso_database_deinit(c->db);
-    c->db = NULL;
-  }
-  // 注意：不要释放容器本身，它由 GC 管理
+  // 容器本身由 GC 管理，不要 free
 }
-
-static mturso_conn_t *conn_new(void) {
-  mturso_conn_t *h =
-      (mturso_conn_t *)moonbit_make_external_object(conn_finalize, sizeof(mturso_conn_t));
-  memset(h, 0, sizeof(mturso_conn_t));
-  return h;
-}
-
-// ---------------------------------------------------------------------------
-// 导出的 FFI
-// ---------------------------------------------------------------------------
 
 MOONBIT_FFI_EXPORT
-mturso_conn_t *mturso_open(moonbit_bytes_t path) {
+mturso_db_t *mturso_db_open(moonbit_bytes_t path) {
   clear_err();
   ensure_setup();
 
-  mturso_conn_t *h = conn_new();
+  mturso_db_t *h = (mturso_db_t *)moonbit_make_external_object(db_finalize, sizeof(mturso_db_t));
+  memset(h, 0, sizeof(mturso_db_t));
   if (g_setup_state != 1) {
     if (g_err[0] == '\0') {
       set_err("turso_setup failed");
@@ -127,7 +114,7 @@ mturso_conn_t *mturso_open(moonbit_bytes_t path) {
   }
 
   turso_database_config_t cfg = {0};
-  cfg.path = (const char *)path; // Bytes 由运行时保证 NUL 结尾
+  cfg.path = (const char *)path; // Bytes 保证 NUL 结尾
   cfg.async_io = 0;              // 同步模式：库在调用线程上推进 I/O
 
   const char *err = NULL;
@@ -137,17 +124,62 @@ mturso_conn_t *mturso_open(moonbit_bytes_t path) {
   }
   if (turso_database_open(h->db, &err) != TURSO_OK) {
     set_err(err);
-    return h;
-  }
-  if (turso_database_connect(h->db, &h->conn, &err) != TURSO_OK) {
-    set_err(err);
-    return h;
   }
   return h;
 }
 
-// 用 step 把语句跑到 TURSO_DONE。
-// 注意：C API 要求同一个语句不能在 step / execute 之间混用，这里统一用 step。
+MOONBIT_FFI_EXPORT
+void mturso_db_close(mturso_db_t *db) {
+  if (db == NULL || db->db == NULL) {
+    return;
+  }
+  turso_database_deinit(db->db);
+  db->db = NULL;
+}
+
+// ---------------------------------------------------------------------------
+// Connection（一个 Database 可以开多个）
+// ---------------------------------------------------------------------------
+
+typedef struct {
+  turso_connection_t *conn;
+} mturso_conn_t;
+
+static void conn_finalize(void *self) {
+  mturso_conn_t *h = (mturso_conn_t *)self;
+  if (h->conn != NULL) {
+    turso_connection_deinit(h->conn);
+    h->conn = NULL;
+  }
+}
+
+MOONBIT_FFI_EXPORT
+mturso_conn_t *mturso_db_connect(mturso_db_t *db) {
+  clear_err();
+  mturso_conn_t *h =
+      (mturso_conn_t *)moonbit_make_external_object(conn_finalize, sizeof(mturso_conn_t));
+  memset(h, 0, sizeof(mturso_conn_t));
+  if (db == NULL || db->db == NULL) {
+    set_err("database is not open");
+    return h;
+  }
+  const char *err = NULL;
+  if (turso_database_connect(db->db, &h->conn, &err) != TURSO_OK) {
+    set_err(err);
+  }
+  return h;
+}
+
+MOONBIT_FFI_EXPORT
+void mturso_conn_close(mturso_conn_t *conn) {
+  if (conn == NULL || conn->conn == NULL) {
+    return;
+  }
+  turso_connection_deinit(conn->conn);
+  conn->conn = NULL;
+}
+
+// 用 step 把语句跑到 TURSO_DONE（不混用 execute）
 static int step_to_done(turso_statement_t *stmt, const char **err) {
   for (;;) {
     turso_status_code_t st = turso_statement_step(stmt, err);
@@ -168,7 +200,7 @@ static int step_to_done(turso_statement_t *stmt, const char **err) {
 }
 
 MOONBIT_FFI_EXPORT
-int64_t mturso_exec(mturso_conn_t *conn, moonbit_bytes_t sql) {
+int64_t mturso_conn_exec(mturso_conn_t *conn, moonbit_bytes_t sql) {
   clear_err();
   if (conn == NULL || conn->conn == NULL) {
     set_err("connection is not open");
@@ -194,7 +226,7 @@ int64_t mturso_exec(mturso_conn_t *conn, moonbit_bytes_t sql) {
 }
 
 MOONBIT_FFI_EXPORT
-moonbit_bytes_t mturso_query(mturso_conn_t *conn, moonbit_bytes_t sql) {
+moonbit_bytes_t mturso_conn_query(mturso_conn_t *conn, moonbit_bytes_t sql) {
   clear_err();
   if (conn == NULL || conn->conn == NULL) {
     set_err("connection is not open");
@@ -264,7 +296,7 @@ moonbit_bytes_t mturso_query(mturso_conn_t *conn, moonbit_bytes_t sql) {
         case TURSO_TYPE_NULL:
           sb_puts(&sb, "NULL");
           break;
-        default: // BLOB 等先简化处理
+        default: // BLOB 等先简化
           sb_puts(&sb, "<blob>");
           break;
       }
@@ -287,19 +319,4 @@ moonbit_bytes_t mturso_query(mturso_conn_t *conn, moonbit_bytes_t sql) {
 MOONBIT_FFI_EXPORT
 moonbit_bytes_t mturso_last_error(void) {
   return bytes_dup(g_err, (int32_t)strlen(g_err));
-}
-
-MOONBIT_FFI_EXPORT
-void mturso_close(mturso_conn_t *conn) {
-  if (conn == NULL) {
-    return;
-  }
-  if (conn->conn != NULL) {
-    turso_connection_deinit(conn->conn);
-    conn->conn = NULL;
-  }
-  if (conn->db != NULL) {
-    turso_database_deinit(conn->db);
-    conn->db = NULL;
-  }
 }
