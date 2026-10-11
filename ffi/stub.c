@@ -228,6 +228,36 @@ static char *do_query(turso_connection_t *conn, const char *sql, int32_t *out_le
 // Database
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// 测试辅助：注册标量函数 `mt_sleep(ms)` —— 在**执行该语句的线程**上睡 ms 毫秒。
+// 用来验证并发：慢查询睡在它自己的工作线程上，不应影响别的连接。
+// ---------------------------------------------------------------------------
+static turso_value_t mt_sleep_scalar(uintptr_t context, int32_t argc, const turso_value_t *argv,
+                                     turso_context_destructor_t context_destructor,
+                                     turso_value_destructor_t value_destructor) {
+  (void)context;
+  (void)context_destructor;
+  (void)value_destructor;
+  int64_t ms = 0;
+  if (argc >= 1 && argv[0].value_type == TURSO_EXTENSION_VALUE_INTEGER) {
+    ms = argv[0].value.int_value;
+  }
+  if (ms > 0) {
+    usleep((useconds_t)(ms * 1000));
+  }
+  turso_value_t out = {0};
+  out.value_type = TURSO_EXTENSION_VALUE_INTEGER;
+  out.value.int_value = ms;
+  return out;
+}
+
+static void register_test_functions(turso_connection_t *conn) {
+  const char *err = NULL;
+  // deterministic = false：它会睡，不能被常量折叠
+  turso_connection_register_scalar_function(conn, "mt_sleep", 1, false, 0, mt_sleep_scalar, NULL,
+                                            NULL, &err);
+}
+
 typedef struct {
   const turso_database_t *db;
 } mturso_db_t;
@@ -401,6 +431,7 @@ mturso_conn_t *mturso_db_connect(mturso_db_t *db) {
     set_err(err);
     return h;
   }
+  register_test_functions(h->conn);
 
   // 门铃 pipe：读端设成非阻塞，交给 MoonBit 后走事件循环（epoll）
   int fds[2];

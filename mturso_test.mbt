@@ -92,35 +92,38 @@ test "blocking API works without async runtime" {
 }
 
 ///|
-async test "concurrent queries do not block the event loop" {
+async test "慢查询（SQL 里 sleep 2s）不阻塞另一个连接上的快查询" {
   let db = @mturso.Database::open(":memory:")
-  let c1 = db.connect()
-  let c2 = db.connect()
+  let slow = db.connect()
+  let fast = db.connect()
 
-  // 一个足够重的查询，保证 worker 要跑几十毫秒
-  let heavy =
-    #|with recursive c(i) as (select 1 union all select i + 1 from c where i < 300000)
-    #|select count(*) from c
-
-  let q_started : Ref[Bool] = { val: false, }
-  let q_done : Ref[Bool] = { val: false, }
-  let slept_during_query : Ref[Bool] = { val: false, }
+  let slow_ms : Ref[Int64] = { val: 0L, }
+  let fast_ms : Ref[Int64] = { val: 0L, }
 
   @async.with_task_group(group => {
-    group.spawn_bg(no_wait=true, () => {
-      @async.sleep(20)
-      // 如果查询还在跑，说明事件循环在这 20ms 里照常调度的别的任务
-      slept_during_query.val = q_started.val && !q_done.val
+    // 慢查询：`mt_sleep(2000)` 在**执行该语句的工作线程**上睡 2 秒
+    // 注意：不用 no_wait=true —— 那样任务组退出时不会等它
+    group.spawn_bg(() => {
+      let t = @async.now()
+      inspect(slow.query("select mt_sleep(2000)"), content="2000")
+      slow_ms.val = @async.now() - t
     })
-    q_started.val = true
-    inspect(c1.query(heavy), content="300000")
-    q_done.val = true
-    // 另一个连接完全不受影响
-    inspect(c2.query("select 6 * 7"), content="42")
+    // 等慢查询确实开始了，再在**另一个连接**上发快查询
+    @async.sleep(200)
+    let t = @async.now()
+    inspect(fast.query("select 6 * 7"), content="42")
+    fast_ms.val = @async.now() - t
   })
 
-  assert_true(slept_during_query.val)
-  c1.close()
-  c2.close()
+  println(
+    "慢查询 select mt_sleep(2000) 返回用时 \{slow_ms.val}ms；快查询 select 6*7 返回用时 \{fast_ms.val}ms",
+  )
+  // 慢查询确实睡满了 2 秒
+  assert_true(slow_ms.val >= 2000L)
+  // 快查询在慢查询仍在跑的时候就返回了（若被阻塞，它得等到约 2000ms）
+  assert_true(fast_ms.val < 500L)
+
+  slow.close()
+  fast.close()
   db.close()
 }
