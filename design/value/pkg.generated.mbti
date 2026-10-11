@@ -1,0 +1,28 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "jaredzhou/mturso/design/value"
+
+import {
+  "moonbitlang/core/debug",
+}
+
+// Values
+
+// Errors
+
+// Types and methods
+pub(all) struct Column {
+  name : String
+  decltype : String
+} derive(Eq, @debug.Debug)
+
+pub(all) enum Value {
+  Null
+  Integer(Int64)
+  Real(Double)
+  Text(String)
+  Blob(Bytes)
+} derive(Eq, @debug.Debug)
+
+// Type aliases
+
+// Traits

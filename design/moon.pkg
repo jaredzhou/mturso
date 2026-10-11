@@ -1,0 +1,19 @@
+// 设计稿（spec）：只有声明与用法片段，没有实现。
+// 形状确认后再一对一搬进根包 / value 子包。
+import {
+  "jaredzhou/mturso/design/value",
+  "moonbitlang/async",
+  "moonbitlang/core/json",
+}
+
+supported_targets = "+native"
+
+// 这个包就是「只有声明」的设计稿，下列告警是它的性质而不是问题：
+//   68 declaration_unimplemented —— declare 本来就不实现
+//   1 / 24 / 67 —— 用法片段故意没人调用（unused value / error type / async）
+//   79 implicit_impl_as_method  —— derive(Eq, Debug) 的既有告警
+//   53 unused_trait_bound       —— declare 没有函数体，bound 自然「用不到」
+//   6 unused_constructor / 29 unused_package / 92 fragile_catch_all
+//                               —— 设计稿里没人构造、没人用到的包
+
+warnings = "-1-6-20-24-29-53-67-68-79-92"

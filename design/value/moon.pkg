@@ -1,0 +1,6 @@
+// 设计稿：值类型（Value / Column）。实现落地时搬到 jaredzhou/mturso/value。
+supported_targets = "+native"
+
+// 79 = implicit_impl_as_method：derive(Eq, Debug) 在这个 core 版本上的既有告警。
+
+warnings = "-79"

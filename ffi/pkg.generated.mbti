@@ -2,20 +2,36 @@
 package "jaredzhou/mturso/ffi"
 
 // Values
-pub fn close(Conn) -> Unit
+pub fn conn_bell_fd(Conn) -> Int
 
-pub fn exec(Conn, Bytes) -> Int64
+pub fn conn_close(Conn) -> Unit
+
+pub fn conn_exec(Conn, Bytes) -> Int64
+
+pub fn conn_query(Conn, Bytes) -> Bytes
+
+pub fn db_close(Db) -> Unit
+
+pub fn db_connect(Db) -> Conn
+
+pub fn db_open(Bytes) -> Db
 
 pub fn last_error() -> Bytes
 
-pub fn open(Bytes) -> Conn
+pub fn submit_exec(Conn, Bytes) -> Unit
 
-pub fn query(Conn, Bytes) -> Bytes
+pub fn submit_query(Conn, Bytes) -> Unit
+
+pub fn take_exec(Conn) -> Int64
+
+pub fn take_query(Conn) -> Bytes
 
 // Errors
 
 // Types and methods
 pub type Conn
+
+pub type Db
 
 // Type aliases
 

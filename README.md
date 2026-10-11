@@ -57,6 +57,7 @@ bash scripts/fetch-turso-lib.sh   # 复制库 + 重写两个 moon.pkg 的链接�
 | --- | --- |
 | `mturso.mbt` | facade：`Database`、`Connection`、`MtursoError`；`open/connect`、`query`/`exec`（async）、`query_blocking`/`exec_blocking`、`close` |
 | `ffi/` | **独立子包**：`extern "c"` 声明（`ffi.mbt`）+ C stub（`stub.c`）+ vendored `turso.h` |
+| `design/` | **API 设计稿（spec）**：只有 `declare` 声明 + 用法片段，`moon check` 可校验；就是下一版要落地的形状（`Pool` / `Tx` / `Rows` / `Value` 等） |
 | `notes/turso-binding-guide.md` | 设计笔记：为什么这样分层、并发/async 的坑 |
 | `examples/` | Go SDK 示例 + C ABI 工作线程骨架 |
 
