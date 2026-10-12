@@ -6,7 +6,7 @@ MoonBit bindings for [Turso](https://turso.tech) — the Rust rewrite of SQLite 
 ![turso](https://img.shields.io/badge/turso-0.8.2-informational)
 ![license](https://img.shields.io/badge/license-Apache--2.0-green)
 
-`Database` is a connection factory; `Connection` runs SQL. Every connection owns a dedicated **C-side worker thread**, and queries are **async**: statements run on that thread, so the MoonBit event loop never blocks.
+`Database` is a connection factory; `Connection` runs SQL. Queries are **async**: on the native target every connection owns a dedicated **C-side worker thread**, so statements run there and the MoonBit event loop never blocks. (The wasm backend keeps the same async API, but the engine — and therefore the threads — live in the host; see Platform support.)
 
 ```moonbit
 let db = @mturso.Database::open(":memory:")
@@ -21,7 +21,7 @@ db.close()
 ## Features
 
 - **One database, many connections** — call `db.connect()` as often as you like; each connection has its own statement/transaction state and its own worker thread.
-- **Queries don't block the event loop** — blocking happens on the connection's worker thread; a doorbell pipe wakes the awaiting task when the statement finishes.
+- **Queries don't block the event loop (native)** — blocking happens on the connection's own worker thread; a doorbell pipe wakes the awaiting task when the statement finishes. One worker thread per connection is a native-backend implementation detail, not part of the API contract.
 - **SQLite-compatible** — `select sqlite_version()` reports `3.50.4`; DDL/DML and `begin`/`commit`/`rollback` work as you would expect.
 - **Blocking API available** — `query_blocking` / `exec_blocking` run on the calling thread, no async runtime required.
 - **Engine included** — the Turso shared library ships with the repo (`libs/`, ~20 MB); no separate engine install.
@@ -41,6 +41,8 @@ What "wasm" means concretely (measured in the spike, branch `spike/wasm-browser`
 binding, the binding imports a handful of host functions (`exec` / `result_len` / `result_copy` / `log`), and the host
 implements them on top of Turso — in the browser through `@tursodatabase/database-wasm`, on the server/embedded side
 through `wasmtime` plus Turso's C ABI. The same wasm module ran unchanged under Node (two flavours) and wasmtime.
+On wasm the "one worker thread per connection" property does not hold: the MoonBit program runs on a single thread and
+the host owns the engine (and its threads). The cross-target contract is the async query API, not that implementation.
 
 ## Installation
 

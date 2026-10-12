@@ -55,6 +55,20 @@ else
   fi
   cp -f "$SRC" "$LIBS_DIR/$LIB"
   echo "已复制: $LIBS_DIR/$LIB"
+
+# macOS：官方 dylib 的 install_name 指向**构建机上**的绝对路径（例如
+# /Users/runner/work/.../turso-rs/target/lib-release/deps/libturso_sync_sdk_kit.dylib），
+# dyld 会照那条路找，我们写在 cc-link-flags 里的 rpath 就用不上。
+# 改成 @rpath/<名字> 让它按 rpath 解析；改了二进制要重新 ad-hoc 签名（Apple Silicon 要求）。
+if [ "$(uname -s)" = "Darwin" ]; then
+  if command -v install_name_tool >/dev/null 2>&1 && otool -D "$LIBS_DIR/$LIB" 2>/dev/null | grep -q "^/"; then
+    install_name_tool -id "@rpath/$LIB" "$LIBS_DIR/$LIB"
+    echo "已把 install_name 改成 @rpath/$LIB"
+    if command -v codesign >/dev/null 2>&1; then
+      codesign --force --sign - "$LIBS_DIR/$LIB" >/dev/null 2>&1 && echo "已重新 ad-hoc 签名"
+    fi
+  fi
+fi
 fi
 
 # 只替换 cc-link-flags 那一行的值（链接参数必须挂在根包与 ffi 包两处）
