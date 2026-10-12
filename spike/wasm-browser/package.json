@@ -1,0 +1,17 @@
+{
+  "name": "wasm-browser",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@tursodatabase/database": "^0.8.2",
+    "@tursodatabase/database-wasm": "^0.8.2"
+  }
+}

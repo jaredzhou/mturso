@@ -1,0 +1,30 @@
+<!doctype html>
+<!-- spike：浏览器版。**本机没有浏览器，未实测**（见 ../README.md）。
+     起两个 Web Worker：A 跑 MoonBit 的 wasm（同步、Atomics.wait），B 跑 Turso 的浏览器包（异步）。 -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>mturso wasm spike</title>
+  </head>
+  <body>
+    <h1>MoonBit (wasm) → Turso (wasm, in browser)</h1>
+    <pre id="out">starting…</pre>
+    <script type="module">
+      const out = document.getElementById("out");
+      const SAB = new SharedArrayBuffer(64 + 8192 + 65536);
+      const wasm = "../moonbit/_build/wasm/debug/build/mturso-wasm-spike.wasm";
+
+      const turso = new Worker("./worker-turso.mjs", { type: "module" });
+      turso.postMessage({ sab: SAB });
+
+      const moonbit = new Worker("./worker-moonbit.mjs", { type: "module" });
+      moonbit.postMessage({ sab: SAB, wasm });
+      moonbit.onmessage = (e) => {
+        out.textContent += e.data + "\n";
+      };
+
+      // 线程 B 的日志（Turso 侧的报错也走这里，方便排查）
+      turso.onmessage = (e) => console.log("[turso worker]", e.data);
+    </script>
+  </body>
+</html>

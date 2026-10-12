@@ -1,0 +1,14 @@
+import {
+  "moonbitlang/core/encoding/utf8",
+}
+
+supported_targets = "+wasm"
+
+options(
+  link: {
+    "wasm": {
+      "exports": [ "mt_demo" ],
+      "export-memory-name": "memory",
+    },
+  },
+)
