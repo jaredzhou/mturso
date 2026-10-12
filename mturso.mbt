@@ -10,8 +10,8 @@
 
 ///|
 /// 绑定层错误。
-pub suberror MtursoError {
-  MtursoError(String)
+pub suberror TursoError {
+  TursoError(String)
 }
 
 ///|
@@ -34,10 +34,10 @@ pub struct Connection {
 
 ///|
 /// 读取 FFI 侧的错误槽：非空就抛。
-fn check_error() -> Unit raise MtursoError {
+fn check_error() -> Unit raise TursoError {
   let msg = @utf8.decode_lossy(@ffi.last_error())
   if msg != "" {
-    raise MtursoError(msg)
+    raise TursoError(msg)
   }
 }
 
@@ -47,7 +47,7 @@ fn check_error() -> Unit raise MtursoError {
 /// ```mbt nocheck
 /// let db = @mturso.Database::open(":memory:")
 /// ```
-pub fn Database::open(path : String) -> Database raise MtursoError {
+pub fn Database::open(path : String) -> Database raise TursoError {
   let raw = @ffi.db_open(@utf8.encode(path))
   check_error()
   { raw, }
@@ -61,7 +61,7 @@ pub fn Database::open(path : String) -> Database raise MtursoError {
 ///
 /// let c2 = db.connect()
 /// ```
-pub fn Database::connect(self : Database) -> Connection raise MtursoError {
+pub fn Database::connect(self : Database) -> Connection raise TursoError {
   let raw = @ffi.db_connect(self.raw)
   check_error()
   { db: self, raw, bell: { val: None, }, }
@@ -83,14 +83,14 @@ pub fn Connection::close(self : Connection) -> Unit {
 /// 懒创建门铃流（只在本连接的第一次异步调用时建一次）。
 async fn Connection::bell_stream(
   self : Connection,
-) -> @raw_fd.RawFdStream raise MtursoError {
+) -> @raw_fd.RawFdStream raise TursoError {
   match self.bell.val {
     Some(stream) => stream
     None => {
       let fd = @ffi.conn_bell_fd(self.raw)
       check_error()
       let stream = @raw_fd.RawFdStream(fd) catch {
-        _ => raise MtursoError("failed to create doorbell stream")
+        _ => raise TursoError("failed to create doorbell stream")
       }
       self.bell.val = Some(stream)
       stream
@@ -99,10 +99,10 @@ async fn Connection::bell_stream(
 }
 
 ///|
-/// 等待工作线程敲门铃（`read_exactly` 抛的是通用 `Error`，这里转成 `MtursoError`）。
-async fn await_bell(bell : @raw_fd.RawFdStream) -> Unit raise MtursoError {
+/// 等待工作线程敲门铃（`read_exactly` 抛的是通用 `Error`，这里转成 `TursoError`）。
+async fn await_bell(bell : @raw_fd.RawFdStream) -> Unit raise TursoError {
   ignore(bell.read_exactly(1)) catch {
-    _ => raise MtursoError("doorbell read failed")
+    _ => raise TursoError("doorbell read failed")
   }
 }
 
@@ -113,7 +113,7 @@ async fn await_bell(bell : @raw_fd.RawFdStream) -> Unit raise MtursoError {
 pub async fn Connection::query(
   self : Connection,
   sql : String,
-) -> String raise MtursoError {
+) -> String raise TursoError {
   let bell = self.bell_stream()
   @ffi.submit_query(self.raw, @utf8.encode(sql))
   check_error()
@@ -128,7 +128,7 @@ pub async fn Connection::query(
 pub async fn Connection::exec(
   self : Connection,
   sql : String,
-) -> Int64 raise MtursoError {
+) -> Int64 raise TursoError {
   let bell = self.bell_stream()
   @ffi.submit_exec(self.raw, @utf8.encode(sql))
   check_error()
@@ -143,7 +143,7 @@ pub async fn Connection::exec(
 pub fn Connection::query_blocking(
   self : Connection,
   sql : String,
-) -> String raise MtursoError {
+) -> String raise TursoError {
   let result = @ffi.conn_query(self.raw, @utf8.encode(sql))
   check_error()
   @utf8.decode_lossy(result)
@@ -154,7 +154,7 @@ pub fn Connection::query_blocking(
 pub fn Connection::exec_blocking(
   self : Connection,
   sql : String,
-) -> Int64 raise MtursoError {
+) -> Int64 raise TursoError {
   let changes = @ffi.conn_exec(self.raw, @utf8.encode(sql))
   check_error()
   changes

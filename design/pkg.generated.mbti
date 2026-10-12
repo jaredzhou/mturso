@@ -7,14 +7,14 @@ import {
 }
 
 // Values
-pub async fn[T, B : TxBeginner] begin_func(B, async (&Tx) -> T) -> T raise MtursoError
+pub async fn[T, B : TxBeginner] begin_func(B, async (&Tx) -> T) -> T raise TursoError
 
-pub async fn[T] retry_stmt(&QueryExecutor, async (&QueryExecutor) -> T, opts? : RetryOptions) -> T raise MtursoError
+pub async fn[T] retry_stmt(&QueryExecutor, async (&QueryExecutor) -> T, opts? : RetryOptions) -> T raise TursoError
 
-pub async fn[T, B : TxBeginner] retry_tx(B, async (&Tx) -> T, opts? : RetryOptions) -> T raise MtursoError
+pub async fn[T, B : TxBeginner] retry_tx(B, async (&Tx) -> T, opts? : RetryOptions) -> T raise TursoError
 
 // Errors
-pub suberror MtursoError {
+pub suberror TursoError {
   ConnectionError(String)
   QueryError(String)
   NoRows
@@ -28,36 +28,36 @@ pub suberror ValueError {
 
 // Types and methods
 pub type Connection
-pub async fn Connection::begin_tx(Self, opts? : TxOptions) -> &Tx raise MtursoError
+pub async fn Connection::begin_tx(Self, opts? : TxOptions) -> &Tx raise TursoError
 pub fn Connection::close(Self) -> Unit
-pub async fn Connection::execute(Self, String, params? : Array[&ToValue]) -> ExecResult raise MtursoError
+pub async fn Connection::execute(Self, String, params? : Array[&ToValue]) -> ExecResult raise TursoError
 pub fn Connection::is_closed(Self) -> Bool
 pub fn Connection::last_insert_rowid(Self) -> Int64
-pub async fn Connection::query(Self, String, params? : Array[&ToValue]) -> &Rows raise MtursoError
-pub async fn Connection::query_one(Self, String, params? : Array[&ToValue]) -> Row raise MtursoError
+pub async fn Connection::query(Self, String, params? : Array[&ToValue]) -> &Rows raise TursoError
+pub async fn Connection::query_one(Self, String, params? : Array[&ToValue]) -> Row raise TursoError
 pub fn Connection::sqlite_version(Self) -> String
 pub impl Closer for Connection
 pub impl QueryExecutor for Connection
 pub impl TxBeginner for Connection
 
 pub type Database
-pub fn Database::close(Self) -> Unit raise MtursoError
-pub fn Database::connect(Self) -> Connection raise MtursoError
-pub fn Database::open(String) -> Self raise MtursoError
+pub fn Database::close(Self) -> Unit raise TursoError
+pub fn Database::connect(Self) -> Connection raise TursoError
+pub fn Database::open(String) -> Self raise TursoError
 
 pub type ExecResult
 pub fn ExecResult::affected_rows(Self) -> Int
 pub fn ExecResult::close(Self) -> Unit
 
 pub type Pool
-pub async fn Pool::acquire(Self) -> PoolConn raise MtursoError
-pub async fn Pool::begin_tx(Self, opts? : TxOptions) -> &Tx raise MtursoError
+pub async fn Pool::acquire(Self) -> PoolConn raise TursoError
+pub async fn Pool::begin_tx(Self, opts? : TxOptions) -> &Tx raise TursoError
 pub fn Pool::close(Self) -> Unit
-pub async fn Pool::execute(Self, String, params? : Array[&ToValue]) -> ExecResult raise MtursoError
+pub async fn Pool::execute(Self, String, params? : Array[&ToValue]) -> ExecResult raise TursoError
 pub fn Pool::idle(Self) -> Int
-pub async fn Pool::new(Database, config? : PoolConfig) -> Self raise MtursoError
-pub async fn Pool::query(Self, String, params? : Array[&ToValue]) -> &Rows raise MtursoError
-pub async fn Pool::query_one(Self, String, params? : Array[&ToValue]) -> Row raise MtursoError
+pub async fn Pool::new(Database, config? : PoolConfig) -> Self raise TursoError
+pub async fn Pool::query(Self, String, params? : Array[&ToValue]) -> &Rows raise TursoError
+pub async fn Pool::query_one(Self, String, params? : Array[&ToValue]) -> Row raise TursoError
 pub fn Pool::stats(Self) -> PoolStats
 pub fn Pool::total(Self) -> Int
 pub impl Closer for Pool
@@ -72,11 +72,11 @@ pub(all) struct PoolConfig {
 pub fn PoolConfig::new(max_conns? : Int, min_idle? : Int, max_idle_sec? : Int) -> Self
 
 pub type PoolConn
-pub async fn PoolConn::begin_tx(Self, opts? : TxOptions) -> &Tx raise MtursoError
+pub async fn PoolConn::begin_tx(Self, opts? : TxOptions) -> &Tx raise TursoError
 pub fn PoolConn::close(Self) -> Unit
-pub async fn PoolConn::execute(Self, String, params? : Array[&ToValue]) -> ExecResult raise MtursoError
-pub async fn PoolConn::query(Self, String, params? : Array[&ToValue]) -> &Rows raise MtursoError
-pub async fn PoolConn::query_one(Self, String, params? : Array[&ToValue]) -> Row raise MtursoError
+pub async fn PoolConn::execute(Self, String, params? : Array[&ToValue]) -> ExecResult raise TursoError
+pub async fn PoolConn::query(Self, String, params? : Array[&ToValue]) -> &Rows raise TursoError
+pub async fn PoolConn::query_one(Self, String, params? : Array[&ToValue]) -> Row raise TursoError
 pub fn PoolConn::release(Self) -> Unit
 pub impl Closer for PoolConn
 pub impl QueryExecutor for PoolConn
@@ -110,8 +110,8 @@ pub struct Row {
   columns : Array[@value.Column]
 }
 pub fn Row::columns(Self) -> Array[@value.Column]
-pub fn[T : FromValue] Row::get(Self, Int) -> T raise MtursoError
-pub fn[T : FromValue] Row::get_by_name(Self, String) -> T raise MtursoError
+pub fn[T : FromValue] Row::get(Self, Int) -> T raise TursoError
+pub fn[T : FromValue] Row::get_by_name(Self, String) -> T raise TursoError
 pub fn Row::len(Self) -> Int
 pub fn Row::value(Self, Int) -> @value.Value
 pub fn Row::value_raw(Self, Int) -> Bytes
@@ -142,7 +142,7 @@ pub(open) trait Closer {
 }
 
 pub(open) trait FromRow {
-  fn from_row(Row) -> Self raise MtursoError
+  fn from_row(Row) -> Self raise TursoError
 }
 pub impl FromRow for Bool
 pub impl FromRow for Int
@@ -170,18 +170,18 @@ pub impl FromValue for Bytes
 pub impl FromValue for Json
 
 pub(open) trait QueryExecutor {
-  async fn query(Self, String, params? : Array[&ToValue]) -> &Rows raise MtursoError
-  async fn query_one(Self, String, params? : Array[&ToValue]) -> Row raise MtursoError
-  async fn execute(Self, String, params? : Array[&ToValue]) -> ExecResult raise MtursoError
+  async fn query(Self, String, params? : Array[&ToValue]) -> &Rows raise TursoError
+  async fn query_one(Self, String, params? : Array[&ToValue]) -> Row raise TursoError
+  async fn execute(Self, String, params? : Array[&ToValue]) -> ExecResult raise TursoError
 }
-pub async fn[T : FromRow] &QueryExecutor::fetch(Self, String, params? : Array[&ToValue]) -> Array[T] raise MtursoError
-pub async fn[T : FromRow] &QueryExecutor::fetch_one(Self, String, params? : Array[&ToValue]) -> T raise MtursoError
+pub async fn[T : FromRow] &QueryExecutor::fetch(Self, String, params? : Array[&ToValue]) -> Array[T] raise TursoError
+pub async fn[T : FromRow] &QueryExecutor::fetch_one(Self, String, params? : Array[&ToValue]) -> T raise TursoError
 
 pub(open) trait Rows {
-  async fn has_next(Self) -> Bool raise MtursoError
-  fn get_row(Self) -> Row raise MtursoError
+  async fn has_next(Self) -> Bool raise TursoError
+  fn get_row(Self) -> Row raise TursoError
   fn columns(Self) -> Array[@value.Column]
-  async fn close(Self) -> Unit raise MtursoError
+  async fn close(Self) -> Unit raise TursoError
 }
 
 pub(open) trait ToValue {
@@ -198,10 +198,10 @@ pub impl ToValue for @value.Value
 pub impl ToValue for Json
 
 pub(open) trait Tx : QueryExecutor {
-  async fn commit(Self) -> Unit raise MtursoError
-  async fn rollback(Self) -> Unit raise MtursoError
+  async fn commit(Self) -> Unit raise TursoError
+  async fn rollback(Self) -> Unit raise TursoError
 }
 
 pub(open) trait TxBeginner {
-  async fn begin_tx(Self, opts? : TxOptions) -> &Tx raise MtursoError
+  async fn begin_tx(Self, opts? : TxOptions) -> &Tx raise TursoError
 }

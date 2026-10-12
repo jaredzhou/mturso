@@ -5,7 +5,7 @@
 // 目的就是让编译器验证「这些签名真的能写出调用代码」。
 
 ///|
-fn usage_open(path : String) -> Database raise MtursoError {
+fn usage_open(path : String) -> Database raise TursoError {
   let db = Database::open(path)
   let conn = db.connect()
   println("sqlite_version= \{conn.sqlite_version()}")
@@ -15,7 +15,7 @@ fn usage_open(path : String) -> Database raise MtursoError {
 }
 
 ///|
-async fn usage_query(conn : Connection) -> Unit raise MtursoError {
+async fn usage_query(conn : Connection) -> Unit raise TursoError {
   // 行读取器：拉取式，用完 close（幂等）
   let rows = conn.query("select id, name from users where id > ?1", params=[1])
   let cols : Array[@value.Column] = rows.columns()
@@ -32,7 +32,7 @@ async fn usage_query(conn : Connection) -> Unit raise MtursoError {
 }
 
 ///|
-async fn usage_query_one_and_fetch(conn : Connection) -> Unit raise MtursoError {
+async fn usage_query_one_and_fetch(conn : Connection) -> Unit raise TursoError {
   let one = conn.query_one("select count(*) from users")
   let n : Int64 = one.get(0)
   println("users= \{n}")
@@ -51,7 +51,7 @@ async fn usage_query_one_and_fetch(conn : Connection) -> Unit raise MtursoError 
 }
 
 ///|
-async fn usage_execute(conn : Connection) -> Unit raise MtursoError {
+async fn usage_execute(conn : Connection) -> Unit raise TursoError {
   // 多语句：逐条执行，返回影响行数合计
   let r = conn.execute(
     "insert into users(name) values ('alice'); insert into users(name) values ('bob')",
@@ -62,7 +62,7 @@ async fn usage_execute(conn : Connection) -> Unit raise MtursoError {
 }
 
 ///|
-async fn usage_tx(conn : Connection, pool : Pool) -> Unit raise MtursoError {
+async fn usage_tx(conn : Connection, pool : Pool) -> Unit raise TursoError {
   // 手动事务：MVCC 下用 BEGIN CONCURRENT 让多个写事务并行
   let tx = conn.begin_tx(opts=TxOptions::{
     mode: Some(TxMode::Concurrent),
@@ -100,7 +100,7 @@ async fn usage_tx(conn : Connection, pool : Pool) -> Unit raise MtursoError {
 }
 
 ///|
-async fn usage_pool(db : Database) -> Unit raise MtursoError {
+async fn usage_pool(db : Database) -> Unit raise TursoError {
   let pool = Pool::new(db, config=PoolConfig::new(max_conns=4, min_idle=1))
 
   // 隐式：query/execute 自动 acquire → 用完自动 release
@@ -119,21 +119,21 @@ async fn usage_pool(db : Database) -> Unit raise MtursoError {
 }
 
 ///|
-async fn usage_errors(conn : Connection) -> Unit raise MtursoError {
+async fn usage_errors(conn : Connection) -> Unit raise TursoError {
   ignore(conn.execute("insert into t(id) values (1)")) catch {
-    MtursoError::Busy(msg) =>
+    TursoError::Busy(msg) =>
       println("写锁忙（交给 retry_stmt）：\{msg}")
-    MtursoError::Conflict(msg) =>
+    TursoError::Conflict(msg) =>
       println("MVCC 冲突（重开事务）：\{msg}")
-    MtursoError::NoRows => println("一行都没有")
-    MtursoError::QueryError(msg) => println("SQL/约束错：\{msg}")
-    MtursoError::ConnectionError(msg) =>
+    TursoError::NoRows => println("一行都没有")
+    TursoError::QueryError(msg) => println("SQL/约束错：\{msg}")
+    TursoError::ConnectionError(msg) =>
       println("连接或生命周期错：\{msg}")
   }
 }
 
 ///|
-fn usage_value_round_trip(row : Row) -> Unit raise MtursoError {
+fn usage_value_round_trip(row : Row) -> Unit raise TursoError {
   // 值 ↔ 参数：同一套 ToValue/FromValue
   let as_param : Array[&ToValue] = [1, "alice", 3.5, (None : Int?), b"\x01\x02"]
   println("params= \{as_param.length()}")

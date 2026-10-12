@@ -16,7 +16,7 @@ moon check --target native
 | 设计稿 | 实现位置 | 内容 |
 | --- | --- | --- |
 | `design/value/value.mbt` | `value/` | `Value`、`Column` |
-| `design/errors.mbt` | 根包 | `MtursoError`、`ValueError` |
+| `design/errors.mbt` | 根包 | `TursoError`、`ValueError` |
 | `design/traits.mbt` | 根包 | `Row`/`ExecResult`/`ToValue`/`FromValue`/`Rows`/`QueryExecutor`/`Closer`/`FromRow` |
 | `design/values.mbt` | 根包 | 上面这些 trait 的内置类型实例 + `Timestamp` |
 | `design/conn.mbt` | 根包 | `Database`、`Connection` |
@@ -42,7 +42,7 @@ moon check --target native
 1. **一个库多个连接**：`Database::connect()` 可重复调用，每条连接有自己的
    C 侧工作线程；`Database::close()` 在有活连接时会拒绝。
 2. **`BEGIN CONCURRENT`**：MVCC 并发写的入口，体现为 `TxMode::Concurrent`。
-   冲突是 `MtursoError::Conflict`（事务已被中止，必须整事务重开）。
+   冲突是 `TursoError::Conflict`（事务已被中止，必须整事务重开）。
 3. **`Busy` vs `Conflict` 分开**：前者是 WAL 写锁忙（语句级重试），后者是 MVCC
    写写冲突（事务级重试）。`retry_stmt` / `retry_tx` 分别只认其中一个。
 4. **CDC 与 MVCC 互斥**（同一条连接上二选一），这一版没进 trait 形状。

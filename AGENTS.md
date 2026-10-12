@@ -1,5 +1,19 @@
 # AGENTS.md
 
+## Agent skills
+
+### Issue tracker
+
+Issues 和 spec 都在 GitHub Issues（`jaredzhou/mturso`），用 `gh` CLI 操作。见 `docs/agents/issue-tracker.md`。
+
+### Triage labels
+
+五个默认标签（`needs-triage` / `needs-info` / `ready-for-agent` / `ready-for-human` / `wontfix`）。见 `docs/agents/triage-labels.md`。
+
+### Domain docs
+
+single-context：根目录 `CONTEXT.md` + `docs/adr/`。见 `docs/agents/domain.md`。
+
 本仓库是一个 **Turso 研究仓库**，目标是搞清楚两件事：
 
 1. **用法（usage）**：在本地跑 Turso 引擎 / SQL shell，并通过客户端 SDK 访问（首个目标是 **Go SDK**）。

@@ -63,12 +63,12 @@ async test "transaction commit and rollback" {
 }
 
 ///|
-async test "query error raises MtursoError" {
+async test "query error raises TursoError" {
   let db = @mturso.Database::open(":memory:")
   let conn = db.connect()
   let mut raised = false
   try conn.query("select * from no_such_table") |> ignore catch {
-    @mturso.MtursoError(msg) => {
+    @mturso.TursoError(msg) => {
       assert_true(msg.length() > 0)
       raised = true
     }
@@ -101,11 +101,11 @@ async test "慢查询（SQL 里 sleep 2s）不阻塞另一个连接上的快查�
   let fast_ms : Ref[Int64] = { val: 0L, }
 
   @async.with_task_group(group => {
-    // 慢查询：`mt_sleep(2000)` 在**执行该语句的工作线程**上睡 2 秒
+    // 慢查询：`turso_sleep(2000)` 在**执行该语句的工作线程**上睡 2 秒
     // 注意：不用 no_wait=true —— 那样任务组退出时不会等它
     group.spawn_bg(() => {
       let t = @async.now()
-      inspect(slow.query("select mt_sleep(2000)"), content="2000")
+      inspect(slow.query("select turso_sleep(2000)"), content="2000")
       slow_ms.val = @async.now() - t
     })
     // 等慢查询确实开始了，再在**另一个连接**上发快查询
@@ -116,7 +116,7 @@ async test "慢查询（SQL 里 sleep 2s）不阻塞另一个连接上的快查�
   })
 
   println(
-    "慢查询 select mt_sleep(2000) 返回用时 \{slow_ms.val}ms；快查询 select 6*7 返回用时 \{fast_ms.val}ms",
+    "慢查询 select turso_sleep(2000) 返回用时 \{slow_ms.val}ms；快查询 select 6*7 返回用时 \{fast_ms.val}ms",
   )
   // 慢查询确实睡满了 2 秒
   assert_true(slow_ms.val >= 2000L)

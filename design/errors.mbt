@@ -8,7 +8,7 @@
 ///
 /// - `Busy`：WAL 写锁忙（`TURSO_BUSY`）——**语句级**可重试。
 /// - `Conflict`：MVCC 写写冲突（`TURSO_BUSY_SNAPSHOT`）——**事务级**可重试（事务已被中止）。
-pub suberror MtursoError {
+pub suberror TursoError {
   ConnectionError(String)
   QueryError(String)
   NoRows

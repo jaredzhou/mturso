@@ -10,8 +10,8 @@ import {
 // Values
 
 // Errors
-pub suberror MtursoError {
-  MtursoError(String)
+pub suberror TursoError {
+  TursoError(String)
 }
 
 // Types and methods
@@ -21,17 +21,17 @@ pub struct Connection {
   bell : @ref.Ref[@raw_fd.RawFdStream?]
 }
 pub fn Connection::close(Self) -> Unit
-pub async fn Connection::exec(Self, String) -> Int64 raise MtursoError
-pub fn Connection::exec_blocking(Self, String) -> Int64 raise MtursoError
-pub async fn Connection::query(Self, String) -> String raise MtursoError
-pub fn Connection::query_blocking(Self, String) -> String raise MtursoError
+pub async fn Connection::exec(Self, String) -> Int64 raise TursoError
+pub fn Connection::exec_blocking(Self, String) -> Int64 raise TursoError
+pub async fn Connection::query(Self, String) -> String raise TursoError
+pub fn Connection::query_blocking(Self, String) -> String raise TursoError
 
 pub struct Database {
   raw : @ffi.Db
 }
 pub fn Database::close(Self) -> Unit
-pub fn Database::connect(Self) -> Connection raise MtursoError
-pub fn Database::open(String) -> Self raise MtursoError
+pub fn Database::connect(Self) -> Connection raise TursoError
+pub fn Database::open(String) -> Self raise TursoError
 
 // Type aliases
 

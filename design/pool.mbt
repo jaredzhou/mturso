@@ -50,11 +50,11 @@ declare pub type PoolConn
 declare pub async fn Pool::new(
   db : Database,
   config? : PoolConfig,
-) -> Pool raise MtursoError
+) -> Pool raise TursoError
 
 ///|
 /// 显式取一条连接；达到 `max_conns` 时**等待**别人归还（不抛 Busy）。
-declare pub async fn Pool::acquire(self : Pool) -> PoolConn raise MtursoError
+declare pub async fn Pool::acquire(self : Pool) -> PoolConn raise TursoError
 
 ///|
 /// 归还连接（幂等；被标记为坏掉的连接会被真正 close 掉、回收线程）。
@@ -82,54 +82,54 @@ declare pub async fn Pool::query(
   self : Pool,
   sql : String,
   params? : Array[&ToValue],
-) -> &Rows raise MtursoError
+) -> &Rows raise TursoError
 
 ///|
 declare pub async fn Pool::query_one(
   self : Pool,
   sql : String,
   params? : Array[&ToValue],
-) -> Row raise MtursoError
+) -> Row raise TursoError
 
 ///|
 declare pub async fn Pool::execute(
   self : Pool,
   sql : String,
   params? : Array[&ToValue],
-) -> ExecResult raise MtursoError
+) -> ExecResult raise TursoError
 
 ///|
 declare pub async fn Pool::begin_tx(
   self : Pool,
   opts? : TxOptions,
-) -> &Tx raise MtursoError
+) -> &Tx raise TursoError
 
 ///|
 declare pub async fn PoolConn::query(
   self : PoolConn,
   sql : String,
   params? : Array[&ToValue],
-) -> &Rows raise MtursoError
+) -> &Rows raise TursoError
 
 ///|
 declare pub async fn PoolConn::query_one(
   self : PoolConn,
   sql : String,
   params? : Array[&ToValue],
-) -> Row raise MtursoError
+) -> Row raise TursoError
 
 ///|
 declare pub async fn PoolConn::execute(
   self : PoolConn,
   sql : String,
   params? : Array[&ToValue],
-) -> ExecResult raise MtursoError
+) -> ExecResult raise TursoError
 
 ///|
 declare pub async fn PoolConn::begin_tx(
   self : PoolConn,
   opts? : TxOptions,
-) -> &Tx raise MtursoError
+) -> &Tx raise TursoError
 
 ///|
 declare pub fn PoolConn::close(self : PoolConn) -> Unit

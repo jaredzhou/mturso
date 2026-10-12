@@ -37,14 +37,14 @@ declare pub fn TxOptions::default() -> TxOptions
 /// 进行中的事务。继承 `QueryExecutor`，所以在事务里 query/execute 的写法和
 /// 在连接上完全一样。
 pub(open) trait Tx: QueryExecutor {
-  async fn commit(Self) -> Unit raise MtursoError
-  async fn rollback(Self) -> Unit raise MtursoError
+  async fn commit(Self) -> Unit raise TursoError
+  async fn rollback(Self) -> Unit raise TursoError
 }
 
 ///|
 /// 能开事务的东西：`Connection` / `Pool` / `PoolConn`。
 pub(open) trait TxBeginner {
-  async fn begin_tx(Self, opts? : TxOptions) -> &Tx raise MtursoError
+  async fn begin_tx(Self, opts? : TxOptions) -> &Tx raise TursoError
 }
 
 ///|
@@ -73,7 +73,7 @@ declare pub fn RetryOptions::default() -> RetryOptions
 declare pub async fn[T, B : TxBeginner] begin_func(
   beginner : B,
   f : async (&Tx) -> T,
-) -> T raise MtursoError
+) -> T raise TursoError
 
 ///|
 /// `begin_func` + 重试，只重试 **`Conflict`**（MVCC 写写冲突：事务已被中止，
@@ -85,7 +85,7 @@ declare pub async fn[T, B : TxBeginner] retry_tx(
   beginner : B,
   f : async (&Tx) -> T,
   opts? : RetryOptions,
-) -> T raise MtursoError
+) -> T raise TursoError
 
 ///|
 /// 语句级重试，只重试 **`Busy`**（WAL 写锁忙）。
@@ -98,4 +98,4 @@ declare pub async fn[T] retry_stmt(
   exec : &QueryExecutor,
   f : async (&QueryExecutor) -> T,
   opts? : RetryOptions,
-) -> T raise MtursoError
+) -> T raise TursoError

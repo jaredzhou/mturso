@@ -20,19 +20,19 @@ pub struct Row {
 }
 
 ///|
-/// 按下标取值。类型不符时抛 `MtursoError::QueryError`（镜像 moonpg 的做法：
+/// 按下标取值。类型不符时抛 `TursoError::QueryError`（镜像 moonpg 的做法：
 /// `FromValue` 抛的 `ValueError` 在这里被包成数据库错误）。
 declare pub fn[T : FromValue] Row::get(
   self : Row,
   index : Int,
-) -> T raise MtursoError
+) -> T raise TursoError
 
 ///|
 /// 按列名取值。
 declare pub fn[T : FromValue] Row::get_by_name(
   self : Row,
   name : String,
-) -> T raise MtursoError
+) -> T raise TursoError
 
 ///|
 /// 该行所属结果集的列描述。
@@ -64,21 +64,21 @@ declare pub fn ExecResult::close(self : ExecResult) -> Unit
 /// 拉取式行读取器（本版是**物化**实现：整个结果集已在内存里；
 /// 将来换成流式实现不需要改这个 trait）。
 pub(open) trait Rows {
-  async fn has_next(Self) -> Bool raise MtursoError
-  fn get_row(Self) -> Row raise MtursoError
+  async fn has_next(Self) -> Bool raise TursoError
+  fn get_row(Self) -> Row raise TursoError
   fn columns(Self) -> Array[@value.Column]
-  async fn close(Self) -> Unit raise MtursoError
+  async fn close(Self) -> Unit raise TursoError
 }
 
 ///|
 /// 能执行 SQL 的东西：`Connection`、`Pool`、`PoolConn`、以及 `Tx` 都实现它。
 pub(open) trait QueryExecutor {
   /// 只能单语句；多语句请用 `execute`。
-  async fn query(Self, String, params? : Array[&ToValue]) -> &Rows raise MtursoError
+  async fn query(Self, String, params? : Array[&ToValue]) -> &Rows raise TursoError
   /// 取一行；零行时抛 `NoRows`。
-  async fn query_one(Self, String, params? : Array[&ToValue]) -> Row raise MtursoError
+  async fn query_one(Self, String, params? : Array[&ToValue]) -> Row raise TursoError
   /// 接受多语句（逐条执行），返回累计影响行数。
-  async fn execute(Self, String, params? : Array[&ToValue]) -> ExecResult raise MtursoError
+  async fn execute(Self, String, params? : Array[&ToValue]) -> ExecResult raise TursoError
 }
 
 ///|
@@ -90,7 +90,7 @@ pub(open) trait Closer {
 ///|
 /// 能从一行构造出来的类型（配合 `fetch` / `fetch_one`）。
 pub(open) trait FromRow {
-  fn from_row(Row) -> Self raise MtursoError
+  fn from_row(Row) -> Self raise TursoError
 }
 
 ///|
@@ -104,7 +104,7 @@ pub async fn[T : FromRow] &QueryExecutor::fetch(
   self : &QueryExecutor,
   sql : String,
   params? : Array[&ToValue],
-) -> Array[T] raise MtursoError {
+) -> Array[T] raise TursoError {
   let rows = self.query(sql, params?)
   let result : Array[T] = []
   try {
@@ -127,7 +127,7 @@ pub async fn[T : FromRow] &QueryExecutor::fetch_one(
   self : &QueryExecutor,
   sql : String,
   params? : Array[&ToValue],
-) -> T raise MtursoError {
+) -> T raise TursoError {
   let rows = self.query(sql, params?)
   try {
     if rows.has_next() {
@@ -136,7 +136,7 @@ pub async fn[T : FromRow] &QueryExecutor::fetch_one(
       return T::from_row(row)
     }
     rows.close()
-    raise MtursoError::NoRows
+    raise TursoError::NoRows
   } catch {
     e => {
       rows.close()
