@@ -63,9 +63,15 @@ jobs:
       - name: Check
         run: moon check --target native --deny-warn
 
-      # Format check.
-      - name: Format check
-        run: moon fmt --check
+      # Format check（软检查）。
+      #
+      # 为什么是 --warn 而不是 --check：CI 装的是最新工具链（本文写时 0.1.20261012），
+      # 它在默认目标（wasm-gc）下会把源码里的 `Int` 规范成 `Int32`；而 0.1.20260920
+      # 及更早的工具链**不认识 `Int32`**（`The type Int32 is undefined.`）。
+      # 两边无法同时满足，所以在开发用工具链升到 ≥0.1.20261012 之前先软检查：
+      # 仍然打印差异，但不让 CI 变红。
+      - name: Format check (soft; see comment)
+        run: moon fmt --warn
 
       # Build and run all tests.
       - name: Test

@@ -32,6 +32,7 @@ Background: Turso is a **Rust rewrite of SQLite**; upstream is `github.com/turso
 - **`design/` holds the compiler-checked design spec** for the next version: `declare` declarations plus `usage_*.mbt` snippets (ordinary functions, not `test`, because the API is unimplemented). `moon check --target native` must stay clean there. `design/README.md` records the call-shape gotchas found while writing it.
 - `README.md` is **English** (GitHub-facing, standard library README). The notes, `design/README.md` and `docs/agents/*` stay in Chinese.
 - MoonBit toolchain: **0.1.20260920** (core `0.10.14`), dependency `moonbitlang/async@0.22.4`. Note async 0.22.4 needs the new core (older cores lack `eprintln`) — the toolchain was already upgraded via `moon upgrade`.
+- **Toolchain skew to be aware of**: CI installs the *latest* MoonBit (0.1.20261012 at the time of writing) while this machine is on 0.1.20260920. The newer formatter canonicalises a bare `Int` to `Int32` in the default (wasm-gc) pass, and **0.1.20260920 does not know the name `Int32`** — the two toolchains cannot both be satisfied. Because of that, CI runs `moon fmt --warn` (soft) instead of `--check` until the dev toolchain is upgraded; the moment it is, adopt the `Int32` spelling (`moon fmt`) and flip the workflow back to `--check`.
 - After touching FFI or the C stub you must run: `moon check --target native`, `moon test --target native`; finish with `moon fmt && moon info` (and check the `pkg.generated.mbti` diff).
 
 ## Environment (measured 2026-10-11 — re-verify before relying on it)
