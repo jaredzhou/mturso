@@ -65,7 +65,7 @@ pub extern "c" fn submit_exec(conn : Conn, sql : Bytes) = "mturso_submit_exec"
 ///|
 /// 取回门铃的读端 fd（**所有权转移**给调用方，只能取一次）。失败返回 -1。
 #borrow(conn)
-pub extern "c" fn conn_bell_fd(conn : Conn) -> Int = "mturso_conn_bell_fd"
+pub extern "c" fn conn_bell_fd(conn : Conn) -> Int32 = "mturso_conn_bell_fd"
 
 ///|
 /// 取回异步查询结果（失败返回空 `Bytes`，原因见 `last_error()`）。

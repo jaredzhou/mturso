@@ -24,7 +24,7 @@ pub struct Row {
 /// `FromValue` 抛的 `ValueError` 在这里被包成数据库错误）。
 declare pub fn[T : FromValue] Row::get(
   self : Row,
-  index : Int,
+  index : Int32,
 ) -> T raise TursoError
 
 ///|
@@ -40,22 +40,22 @@ declare pub fn Row::columns(self : Row) -> Array[@value.Column]
 
 ///|
 /// 取下标的原始 `Value`（不抛——想精确区分类型的人用这个）。
-declare pub fn Row::value(self : Row, index : Int) -> @value.Value
+declare pub fn Row::value(self : Row, index : Int32) -> @value.Value
 
 ///|
 /// 取下标的**原始字节**（`Text` 也返回未解码的 UTF-8 字节；不抛）。
-declare pub fn Row::value_raw(self : Row, index : Int) -> Bytes
+declare pub fn Row::value_raw(self : Row, index : Int32) -> Bytes
 
 ///|
 /// 列数。
-declare pub fn Row::len(self : Row) -> Int
+declare pub fn Row::len(self : Row) -> Int32
 
 ///|
 /// `execute` 的结果。行数通过 `affected_rows()` 拿（对齐 moonpg，不在连接上放 `changes()`）。
 declare pub type ExecResult
 
 ///|
-declare pub fn ExecResult::affected_rows(self : ExecResult) -> Int
+declare pub fn ExecResult::affected_rows(self : ExecResult) -> Int32
 
 ///|
 declare pub fn ExecResult::close(self : ExecResult) -> Unit

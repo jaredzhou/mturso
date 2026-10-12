@@ -24,7 +24,7 @@ async fn usage_query(conn : Connection) -> Unit raise TursoError {
   }
   while rows.has_next() {
     let row = rows.get_row()
-    let id : Int = row.get(0)
+    let id : Int32 = row.get(0)
     let name : String = row.get_by_name("name")
     println("\{id}: \{name}")
   }
@@ -40,10 +40,10 @@ async fn usage_query_one_and_fetch(conn : Connection) -> Unit raise TursoError {
   // 收集成结构体数组（自动 close 行读取器）。
   // 注意调用形式：`&Trait` 接收者的扩展方法只能显式 UFCS 调用，不能写
   // `conn.fetch(...)`（moonpg 的测试也是这么写的）。
-  let all : Array[(Int, String)] = &QueryExecutor::fetch(
+  let all : Array[(Int32, String)] = &QueryExecutor::fetch(
     conn, "select id, name from users",
   )
-  let first : (Int, String) = &QueryExecutor::fetch_one(
+  let first : (Int32, String) = &QueryExecutor::fetch_one(
     conn, "select id, name from users limit 1",
   )
   let (first_id, first_name) = first
@@ -135,7 +135,13 @@ async fn usage_errors(conn : Connection) -> Unit raise TursoError {
 ///|
 fn usage_value_round_trip(row : Row) -> Unit raise TursoError {
   // 值 ↔ 参数：同一套 ToValue/FromValue
-  let as_param : Array[&ToValue] = [1, "alice", 3.5, (None : Int?), b"\x01\x02"]
+  let as_param : Array[&ToValue] = [
+    1,
+    "alice",
+    3.5,
+    (None : Int32?),
+    b"\x01\x02",
+  ]
   println("params= \{as_param.length()}")
   // 逐列取值（不抛，自己 match）
   match row.value(0) {

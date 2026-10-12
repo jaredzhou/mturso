@@ -11,7 +11,7 @@
 declare pub impl ToValue for Bool
 
 ///|
-declare pub impl ToValue for Int
+declare pub impl ToValue for Int32
 
 ///|
 declare pub impl ToValue for Int64
@@ -44,7 +44,7 @@ declare pub impl ToValue for Json
 declare pub impl FromValue for Bool
 
 ///|
-declare pub impl FromValue for Int
+declare pub impl FromValue for Int32
 
 ///|
 declare pub impl FromValue for Int64
@@ -74,7 +74,7 @@ declare pub impl FromValue for Json
 declare pub impl FromRow for Bool
 
 ///|
-declare pub impl FromRow for Int
+declare pub impl FromRow for Int32
 
 ///|
 declare pub impl FromRow for Int64
