@@ -91,3 +91,47 @@ declare pub impl TxBeginner for Connection
 /// 确定性停掉并 join 掉工作线程；如果此刻正有一个语句在飞，会**等它跑完**
 /// （Turso 没有跨线程取消的 API，这是唯一安全策略）。
 declare pub impl Closer for Connection
+
+///|
+// ---------------------------------------------------------------------------
+// 库级设置（journal_mode 是文件属性，唯一入口是「从某条连接发 PRAGMA」）
+
+///|
+/// 引擎真正支持（`JournalMode::supported()`）的 journal mode 就这两个。
+pub(all) enum JournalMode {
+  Wal
+  Mvcc
+} derive(Eq, Debug)
+
+///|
+/// 设置这个库的 journal mode（内部借一条连接发 `PRAGMA journal_mode=...`）。
+///
+/// **不是廉价的运行时开关**：真正改变模式会先做一次**全量 checkpoint 并
+/// Truncate**（WAL 要完全清空）、改写文件头的 read/write version、清 page cache；
+/// 切到 `Mvcc` 还会打开 `.db-log` 并 bootstrap。同值再设是 no-op。所以尽量在
+/// `open` 时定一次，别频繁切。
+///
+/// journal_mode 是**库/文件级**属性（两个连同一文件的连接看到的是同一个模式），
+/// 所以它挂在 `Database` 而不是 `Connection` 上 —— 否则每条连接各记一份默认值，
+/// 会跟库的真实状态漂移。
+///
+/// **联动**：设成 `Mvcc` 时把本库的默认事务模式设为 `TxMode::Concurrent`，
+/// `Wal` 则设回 `Deferred` —— 因为 MVCC 下普通 `BEGIN` 走 exclusive 路径、
+/// 并发写会 `Busy`，`BEGIN CONCURRENT` 才是 MVCC 该有的默认。之后再手动
+/// `set_default_tx_mode` 会覆盖它（后调用的赢）。
+declare pub fn Database::set_journal_mode(
+  self : Database,
+  mode : JournalMode,
+) -> Unit raise TursoError
+
+///|
+/// 默认事务模式：`begin_tx` 在 `opts.mode == None` 时用它。库刚打开时是 `Deferred`。
+/// 由本库开出的所有连接共享。
+declare pub fn Database::set_default_tx_mode(
+  self : Database,
+  mode : TxMode,
+) -> Unit
+
+///|
+/// 读回当前默认事务模式。
+declare pub fn Database::default_tx_mode(self : Database) -> TxMode

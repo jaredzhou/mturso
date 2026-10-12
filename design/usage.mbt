@@ -62,7 +62,11 @@ async fn usage_execute(conn : Connection) -> Unit raise TursoError {
 }
 
 ///|
-async fn usage_tx(conn : Connection, pool : Pool) -> Unit raise TursoError {
+async fn usage_tx(
+  db : Database,
+  conn : Connection,
+  pool : Pool,
+) -> Unit raise TursoError {
   // 手动事务：MVCC 下用 BEGIN CONCURRENT 让多个写事务并行
   let tx = conn.begin_tx(opts=TxOptions::{
     mode: Some(TxMode::Concurrent),
@@ -72,7 +76,7 @@ async fn usage_tx(conn : Connection, pool : Pool) -> Unit raise TursoError {
   ignore(tx.execute("update accounts set balance = balance + 100 where id = 2"))
   tx.commit()
 
-  // 自动提交：冲突（Conflict）时整个事务重跑
+  // 事务级：整个事务（begin → body → commit）重跑
   ignore(
     retry_tx(conn, async fn(tx) {
       ignore(
@@ -82,13 +86,9 @@ async fn usage_tx(conn : Connection, pool : Pool) -> Unit raise TursoError {
     }),
   )
 
-  // 语句级重试：只针对 WAL 写锁忙（Busy）
-  ignore(
-    retry_stmt(conn, async fn(exec) {
-      ignore(exec.execute("insert into logs(msg) values ('hi')"))
-      0
-    }),
-  )
+  // 库级声明一次：MVCC + 默认并发事务（begin_tx 不写 mode 时用它）
+  db.set_journal_mode(JournalMode::Mvcc)
+  ignore(db.default_tx_mode() == TxMode::Concurrent)
 
   // 池上也能开事务（TxBeginner），或者用 begin_func 自动 commit/rollback
   ignore(
@@ -121,10 +121,9 @@ async fn usage_pool(db : Database) -> Unit raise TursoError {
 ///|
 async fn usage_errors(conn : Connection) -> Unit raise TursoError {
   ignore(conn.execute("insert into t(id) values (1)")) catch {
-    TursoError::Busy(msg) =>
-      println("写锁忙（交给 retry_stmt）：\{msg}")
+    TursoError::Busy(msg) => println("写锁忙（可重试）：\{msg}")
     TursoError::Conflict(msg) =>
-      println("MVCC 冲突（重开事务）：\{msg}")
+      println("MVCC 写写冲突（可重试）：\{msg}")
     TursoError::NoRows => println("一行都没有")
     TursoError::QueryError(msg) => println("SQL/约束错：\{msg}")
     TursoError::ConnectionError(msg) =>

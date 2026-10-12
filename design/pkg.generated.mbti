@@ -9,8 +9,6 @@ import {
 // Values
 pub async fn[T, B : TxBeginner] begin_func(B, async (&Tx) -> T) -> T raise TursoError
 
-pub async fn[T] retry_stmt(&QueryExecutor, async (&QueryExecutor) -> T, opts? : RetryOptions) -> T raise TursoError
-
 pub async fn[T, B : TxBeginner] retry_tx(B, async (&Tx) -> T, opts? : RetryOptions) -> T raise TursoError
 
 // Errors
@@ -43,11 +41,19 @@ pub impl TxBeginner for Connection
 pub type Database
 pub fn Database::close(Self) -> Unit raise TursoError
 pub fn Database::connect(Self) -> Connection raise TursoError
+pub fn Database::default_tx_mode(Self) -> TxMode
 pub fn Database::open(String) -> Self raise TursoError
+pub fn Database::set_default_tx_mode(Self, TxMode) -> Unit
+pub fn Database::set_journal_mode(Self, JournalMode) -> Unit raise TursoError
 
 pub type ExecResult
 pub fn ExecResult::affected_rows(Self) -> Int
 pub fn ExecResult::close(Self) -> Unit
+
+pub(all) enum JournalMode {
+  Wal
+  Mvcc
+} derive(Eq, @debug.Debug)
 
 pub type Pool
 pub async fn Pool::acquire(Self) -> PoolConn raise TursoError

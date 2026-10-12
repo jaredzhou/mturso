@@ -11,6 +11,13 @@
 moon check --target native
 ```
 
+## 决策记录（ADR）
+
+- [ADR-0001：把连接池并进 Database](../docs/adr/0001-database-is-the-pool.md) ——
+  `Database` 即池（`db.close()` 级联关连接、`Database::open` 改 `async`、
+  `Connection::open` = `max_conns=1` 的私有库）。本目录的 `conn.mbt` / `pool.mbt`
+  仍是**合并前**的形状，落地时按该 ADR 调整。
+
 ## 落地后的目录映射
 
 | 设计稿 | 实现位置 | 内容 |
@@ -20,8 +27,8 @@ moon check --target native
 | `design/traits.mbt` | 根包 | `Row`/`ExecResult`/`ToValue`/`FromValue`/`Rows`/`QueryExecutor`/`Closer`/`FromRow` |
 | `design/values.mbt` | 根包 | 上面这些 trait 的内置类型实例 + `Timestamp` |
 | `design/conn.mbt` | 根包 | `Database`、`Connection` |
-| `design/tx.mbt` | 根包 | `TxMode`/`TxOptions`/`Tx`/`TxBeginner`/`RetryOptions`/`begin_func`/`retry_tx`/`retry_stmt` |
-| `design/pool.mbt` | 根包 | `Pool`/`PoolConn`/`PoolConfig`/`PoolStats`/`PoolRows`/`PoolDbTx` |
+| `design/tx.mbt` | 根包 | `TxMode`/`TxOptions`/`Tx`/`TxBeginner`/`RetryOptions`/`begin_func`/`retry_tx` |
+| `design/pool.mbt` | 根包（并入 `Database`，见 ADR-0001） | `PoolConn`→`Connection`、`PoolConfig`→`Database` 的 `max_conns`、`PoolStats`/`PoolRows`/`PoolDbTx` 随 `Database` |
 | `design/usage.mbt` | 示例 | 用法片段（搬进 `examples/` 与测试） |
 
 根包用 `pub using @value { type Value, type Column }` 转出子包的类型，所以用户
@@ -42,9 +49,12 @@ moon check --target native
 1. **一个库多个连接**：`Database::connect()` 可重复调用，每条连接有自己的
    C 侧工作线程；`Database::close()` 在有活连接时会拒绝。
 2. **`BEGIN CONCURRENT`**：MVCC 并发写的入口，体现为 `TxMode::Concurrent`。
-   冲突是 `TursoError::Conflict`（事务已被中止，必须整事务重开）。
-3. **`Busy` vs `Conflict` 分开**：前者是 WAL 写锁忙（语句级重试），后者是 MVCC
-   写写冲突（事务级重试）。`retry_stmt` / `retry_tx` 分别只认其中一个。
+   冲突是 `TursoError::Conflict`（事务已被中止，必须整事务重开）。**联动**：
+   `set_journal_mode(Mvcc)` 会把**库**的默认事务模式设成 `Concurrent`
+   （`Wal` → `Deferred`）；`begin_tx` 不写 `mode` 时用它。
+3. **`Busy` / `Conflict` 都单列**：都是「可重试」信号。撞到哪一个取决于连接的运行
+   模式（写者互斥 → `Busy`；MVCC + `BEGIN CONCURRENT` → `Conflict`）。重试**只在
+   事务级**：`retry_tx` 把整个事务重跑；读不需要重试，写要能重试就显式走事务。
 4. **CDC 与 MVCC 互斥**（同一条连接上二选一），这一版没进 trait 形状。
 5. **没有 OID / 没有二进制协议**：`Text` 就是 `String`，非法 UTF-8 宽松解码成
    U+FFFD，需要精确字节走 `Row::value_raw`。

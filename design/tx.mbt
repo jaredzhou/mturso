@@ -12,6 +12,9 @@
 /// `Concurrent` 是 **Turso 扩展**（`BEGIN CONCURRENT`，只在 MVCC 下有意义）：
 /// 多个写事务可以同时进行，提交时做乐观冲突检测，冲突方拿 `Conflict`
 /// （C 侧 `TURSO_BUSY_SNAPSHOT`，事务已被中止，必须整事务重试）。
+///
+/// 注意：非 MVCC 下用它**直接报错**（`Concurrent transaction mode is only
+/// supported when MVCC is enabled`），**不是**静默退化成普通 `BEGIN`。
 pub(all) enum TxMode {
   Deferred
   Immediate
@@ -21,6 +24,9 @@ pub(all) enum TxMode {
 
 ///|
 /// `begin_tx` 的选项。
+///
+/// `mode = None` 表示**用库级默认**（`Database::default_tx_mode()`；库刚打开时是
+/// `Deferred`，`set_journal_mode(Mvcc)` 会把它设成 `Concurrent`，见 `conn.mbt`）。
 ///
 /// 这里**不是** moonpg 的 `isolation_level`：SQLite/Turso 只控制「何时拿锁」，
 /// 不提供隔离级别选择。
@@ -76,26 +82,19 @@ declare pub async fn[T, B : TxBeginner] begin_func(
 ) -> T raise TursoError
 
 ///|
-/// `begin_func` + 重试，只重试 **`Conflict`**（MVCC 写写冲突：事务已被中止，
-/// 只能整个重开）。
+/// `begin_func` + 重试。重试单位是**整个事务**（`begin → f(tx) → commit`），
+/// 用在**拿到 `&Tx` 之后**执行的场景：事务一旦因冲突/忙被中止就不能续跑，
+/// 只能 rollback 后重开。
+///
+/// 重试的是「可重试」那一档错误（`Busy` | `Conflict`）—— 不按键值区分，撞到哪个
+/// 取决于连接的运行模式（见 `errors.mbt`）。
+///
+/// 没有语句级重试助手：读不需要重试（直接 `conn.query()`），写要能重试就显式走事务。
 ///
 /// 注意语义：`f` 会被**执行多次**，所以事务里做的事必须可重复执行
 /// （必要时用唯一键/版本号保护，别把「已经发出去的副作用」放在里面）。
 declare pub async fn[T, B : TxBeginner] retry_tx(
   beginner : B,
   f : async (&Tx) -> T,
-  opts? : RetryOptions,
-) -> T raise TursoError
-
-///|
-/// 语句级重试，只重试 **`Busy`**（WAL 写锁忙）。
-///
-/// 非 MVCC 模式下并发写本来就是靠忙等/重试收敛的，所以这个助手的意义是
-/// 「把忙等待交给调用方控制」，而不是「避免失败」。
-/// 接收者用 `&QueryExecutor`（不是 `&Connection`）：MoonBit 里 `&T` 的 `T` 必须是
-/// trait；而且这样 `Pool` / `PoolConn` 也能直接用，与 `fetch` 的写法一致。
-declare pub async fn[T] retry_stmt(
-  exec : &QueryExecutor,
-  f : async (&QueryExecutor) -> T,
   opts? : RetryOptions,
 ) -> T raise TursoError
