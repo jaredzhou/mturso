@@ -37,7 +37,6 @@ db.close()
 | **Windows x64** | 🚧 planned | Turso ships a `.dll` (MSVC) but only as a DLL — no import library — so the binding has to load it at runtime, and the C stub needs Win32 threads/events. Tracked in [#11](https://github.com/jaredzhou/mturso/issues/11) |
 | **WebAssembly / edge** | 🚧 planned | Feasible and prototyped: moonbit compiles the library *and your app* to `wasm`, with a small host shim bridging to Turso's own wasm build. Tracked in [#10](https://github.com/jaredzhou/mturso/issues/10) |
 | **Windows arm64** | ❌ not available | `windows_arm64/turso_sync_sdk_kit.dll` in the platform-libs package is a 0-byte placeholder |
-| **wasm/js without a host** | ❌ n/a | The binding needs a host that owns the engine; `moonrun` / `moonx` inject only the MoonBit runtime's imports, so they cannot host it |
 
 What "wasm" means concretely (measured in the spike, branch `spike/wasm-browser`): your MoonBit program imports the
 binding, the binding imports a handful of host functions (`exec` / `result_len` / `result_copy` / `log`), and the host

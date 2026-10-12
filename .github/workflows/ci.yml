@@ -1,5 +1,7 @@
-# mturso CI — check / fmt / test on every push and PR.
-# 参考 jaredzhou/moonpg 的 ci.yml；差异是本库依赖 Turso 的 C 动态库，链接路径要按检出目录重写。
+# mturso CI — check / fmt / test on Linux and macOS, every push and PR.
+# 参考 jaredzhou/moonpg 的 ci.yml；差异是本库依赖 Turso 的 C 动态库：
+#   Linux：库随仓库分发（libs/），只需把 moon.pkg 里的绝对路径改成检出目录；
+#   macOS：平台库不在仓库里，按架构现取 .dylib，再让脚本复制 + 重写链接参数。
 
 name: CI
 
@@ -13,7 +15,13 @@ jobs:
   build:
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+    runs-on: ${{ matrix.os }}
 
     steps:
       - uses: actions/checkout@v4
@@ -31,9 +39,25 @@ jobs:
           moon update
 
       # 仓库里的 moon.pkg 是开发者本机的绝对路径，runner 上要改成检出目录。
-      # 库（libs/libturso_sync_sdk_kit.so）本身在版本库里，这里只重写链接参数。
-      - name: Point link flags at this checkout
+      - name: Point link flags at this checkout (Linux)
+        if: runner.os == 'Linux'
         run: bash scripts/fetch-turso-lib.sh --rewrite-only
+
+      # macOS 需要本平台的 .dylib（darwin_amd64 / darwin_arm64）：从 Go module proxy 取，
+      # 再交给脚本 —— 复制到 libs/ 并重写两处 cc-link-flags。
+      - name: Fetch the Turso dylib and point link flags at this checkout (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          curl -fsSL "https://proxy.golang.org/github.com/tursodatabase/turso-go-platform-libs/@v/v0.8.2.zip" -o "$tmp/libs.zip"
+          unzip -q "$tmp/libs.zip" -d "$tmp"
+          case "$(uname -m)" in
+            arm64) sub=darwin_arm64 ;;
+            *)     sub=darwin_amd64 ;;
+          esac
+          src="$tmp/github.com/tursodatabase/turso-go-platform-libs@v0.8.2/libs/$sub/libturso_sync_sdk_kit.dylib"
+          TURSO_LIB_SRC="$src" bash scripts/fetch-turso-lib.sh
 
       # Type-check with warnings as errors.
       - name: Check
