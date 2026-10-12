@@ -1,7 +1,7 @@
-# mturso CI — check / fmt / test on Linux and macOS, every push and PR.
+# mturso CI — check / fmt / test on Linux and macOS, x86_64 and arm64, every push and PR.
 # 参考 jaredzhou/moonpg 的 ci.yml；差异是本库依赖 Turso 的 C 动态库：
-#   Linux：库随仓库分发（libs/），只需把 moon.pkg 里的绝对路径改成检出目录；
-#   macOS：平台库不在仓库里，按架构现取 .dylib，再让脚本复制 + 重写链接参数。
+#   仓库里只随包分发了 linux/x86_64 的 .so；其它平台/架构（macOS 两种、linux arm64）
+#   按 runner 的 uname 现取对应的平台库，再交给 fetch 脚本复制 + 重写链接参数。
 
 name: CI
 
@@ -19,8 +19,10 @@ jobs:
       fail-fast: false
       matrix:
         os:
-          - ubuntu-latest
-          - macos-latest
+          - ubuntu-latest # linux x86_64
+          - ubuntu-24.04-arm # linux arm64
+          - macos-latest # macOS arm64（M 系列）
+          - macos-15-intel # macOS x86_64（Intel）
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -38,39 +40,41 @@ jobs:
           moon version --all
           moon update
 
-      # 仓库里的 moon.pkg 是开发者本机的绝对路径，runner 上要改成检出目录。
-      - name: Point link flags at this checkout (Linux)
-        if: runner.os == 'Linux'
+      # 仓库自带 linux/x86_64 的 .so，只需把 moon.pkg 里的绝对路径改成检出目录。
+      - name: Point link flags at this checkout
+        if: runner.os == 'Linux' && runner.arch == 'X64'
         run: bash scripts/fetch-turso-lib.sh --rewrite-only
 
-      # macOS 需要本平台的 .dylib（darwin_amd64 / darwin_arm64）：从 Go module proxy 取，
-      # 再交给脚本 —— 复制到 libs/ 并重写两处 cc-link-flags。
-      - name: Fetch the Turso dylib and point link flags at this checkout (macOS)
-        if: runner.os == 'macOS'
+      # 其它平台/架构：从 Go module proxy 取对应平台的库，交给同一个脚本
+      # （复制进 libs/ + 重写两处 cc-link-flags；macOS 上还会改 install_name 并重新签名）。
+      - name: Fetch the Turso library for this platform
+        if: runner.os == 'macOS' || runner.arch == 'ARM64'
         run: |
           set -euo pipefail
           tmp="$(mktemp -d)"
           curl -fsSL "https://proxy.golang.org/github.com/tursodatabase/turso-go-platform-libs/@v/v0.8.2.zip" -o "$tmp/libs.zip"
           unzip -q "$tmp/libs.zip" -d "$tmp"
-          case "$(uname -m)" in
-            arm64) sub=darwin_arm64 ;;
-            *)     sub=darwin_amd64 ;;
+          case "$(uname -s)/$(uname -m)" in
+            Darwin/arm64)  sub=darwin_arm64; lib=libturso_sync_sdk_kit.dylib ;;
+            Darwin/x86_64) sub=darwin_amd64; lib=libturso_sync_sdk_kit.dylib ;;
+            Linux/aarch64) sub=linux_arm64;  lib=libturso_sync_sdk_kit.so ;;
+            *) echo "unsupported runner: $(uname -s)/$(uname -m)" >&2; exit 1 ;;
           esac
-          src="$tmp/github.com/tursodatabase/turso-go-platform-libs@v0.8.2/libs/$sub/libturso_sync_sdk_kit.dylib"
+          src="$tmp/github.com/tursodatabase/turso-go-platform-libs@v0.8.2/libs/$sub/$lib"
           TURSO_LIB_SRC="$src" bash scripts/fetch-turso-lib.sh
 
       # Type-check with warnings as errors.
       - name: Check
         run: moon check --target native --deny-warn
 
-      # Format check（软检查，见下面的原因）。
+      # Format check（软检查）。
       #
       # 我们的源码刻意写 `Int`（`Int` 与 `Int32` 是同一个类型，`moon info` 也只打印 `Int`），
-      # 但 0.1.20261012 的 formatter 会无条件把它重写成 `Int32`，且 moonfmt 没有开关可以关掉；
-      # 更早的工具链又完全不认识 `Int32`。既然按工具链的拼法改名不是我们要的，
-      # 这里就用 --warn：仍然把差异打在日志里，但不因为一个拼法偏好把 CI 弄红。
-      # 注意：**不要**在这些文件上直接跑 `moon fmt`，它会把 `Int` 改回去成 `Int32`。
-      - name: Format check (soft: formatter would respell Int as Int32)
+      # 但 0.1.20261012 的 formatter 会无条件把它重写成 `Int32`，moonfmt 又没有开关可以关掉；
+      # 更早的工具链则完全不认识 `Int32` 这个名字。既然改名字不是我们要的，这里用 --warn：
+      # 差异仍然打在日志里，但不因为一个拼法偏好把 CI 弄红。
+      # 注意：不要在这些文件上直接跑 `moon fmt`，它会把 `Int` 改成 `Int32`。
+      - name: Format check (soft, see comment)
         run: moon fmt --warn
 
       # Build and run all tests.
