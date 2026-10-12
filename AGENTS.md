@@ -4,111 +4,117 @@
 
 ### Issue tracker
 
-Issues 和 spec 都在 GitHub Issues（`jaredzhou/mturso`），用 `gh` CLI 操作。见 `docs/agents/issue-tracker.md`。
+Issues and specs live in GitHub Issues (`jaredzhou/mturso`), driven with the `gh` CLI. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
-五个默认标签（`needs-triage` / `needs-info` / `ready-for-agent` / `ready-for-human` / `wontfix`）。见 `docs/agents/triage-labels.md`。
+The five default labels (`needs-triage` / `needs-info` / `ready-for-agent` / `ready-for-human` / `wontfix`). See `docs/agents/triage-labels.md`.
 
 ### Domain docs
 
-single-context：根目录 `CONTEXT.md` + `docs/adr/`。见 `docs/agents/domain.md`。
+single-context: root `CONTEXT.md` + `docs/adr/`. See `docs/agents/domain.md`.
 
-本仓库是一个 **Turso 研究仓库**，目标是搞清楚两件事：
+## What this repo is
 
-1. **用法（usage）**：在本地跑 Turso 引擎 / SQL shell，并通过客户端 SDK 访问（首个目标是 **Go SDK**）。
-2. **实现（implementation）**：阅读并总结引擎源码的实现方法（存储、WAL、MVCC、向量检索、全文索引、同步、MCP 等）。
+This repo holds the **MoonBit binding for Turso** (`jaredzhou/mturso`) plus a set of **research notes** on the Turso engine that feed it. Two goals:
 
-背景：Turso 是 **SQLite 的 Rust 重写**，上游仓库为 `github.com/tursodatabase/turso`（早期代号 *limbo*，代码里仍能看到 `limbo_*` 符号）。它与 SQLite 的文件格式/语法高度兼容，并在其上叠加了一批实验特性。
+1. **Usage** — drive the Turso engine / SQL shell locally and through client SDKs, and expose it to MoonBit.
+2. **Implementation** — read the engine source and write down how it works (storage, WAL, MVCC, vector search, full-text index, sync, MCP, …).
 
-## 这个仓库同时是 `jaredzhou/mturso`（Turso 的 MoonBit 绑定）
+Background: Turso is a **Rust rewrite of SQLite**; upstream is `github.com/tursodatabase/turso` (early codename *limbo* — `limbo_*` symbols are still in the code). It is highly compatible with SQLite's file format and SQL dialect, and layers a set of experimental features on top.
 
-- 模块名 `jaredzhou/mturso`（`moon.mod`），**native-only**（链接 Turso 的 C ABI）。
-- `mturso.mbt` 是 facade；**FFI 单独成包**：`ffi/`（`ffi.mbt` 放 `extern "c"` 声明、`stub.c` 是 C 实现、`turso.h` 是 vendored 的 C ABI 头）。
-- 现状：`Database::open` → 多个 `Connection`（`db.connect()`）；`query` / `exec` 是 **async**（每连接一个工作线程 + 门铃 pipe，事件循环不被阻塞），另有 `query_blocking` / `exec_blocking` 同步版本。设计见 `notes/turso-binding-guide.md` §6。
-- MoonBit 工具链：**0.1.20260920**（core `0.10.14`），依赖 `moonbitlang/async@0.22.4`。注意 async 0.22.4 需要新的 core（旧 core 缺 `eprintln`）——工具链已用 `moon upgrade` 升过。
-- 改动 FFI 或 C stub 后必须跑：`moon check --target native`、`moon test --target native`；收尾跑 `moon fmt && moon info`（检查 `pkg.generated.mbti` 的 diff）。
+## The binding: `jaredzhou/mturso`
 
-## 环境（2026-10-11 实测，改动前请复验）
+- Module name `jaredzhou/mturso` (`moon.mod`), **native-only** (it links against Turso's C ABI).
+- `mturso.mbt` is the facade; **FFI is its own package**: `ffi/` (`ffi.mbt` holds the `extern "c"` declarations, `stub.c` is the C implementation, `turso.h` is the vendored C ABI header).
+- Current state: `Database::open` → many `Connection`s (`db.connect()`); `query` / `exec` are **async** (one worker thread + doorbell pipe per connection, so the event loop never blocks), plus synchronous `query_blocking` / `exec_blocking`. Design notes: `notes/turso-binding-guide.md` §6.
+- Public naming: the module is `mturso`, but **names inside the library use the `Turso` prefix** — the error type is `TursoError` (mirroring moonpg's `PgError`), the diagnostic scalar function is `turso_sleep(ms)`. Two exceptions: the C stub's `mturso_*` symbols stay as they are (`turso_*` is the engine's own C ABI namespace), and `@mturso` is the import path.
+- **`design/` holds the compiler-checked design spec** for the next version: `declare` declarations plus `usage_*.mbt` snippets (ordinary functions, not `test`, because the API is unimplemented). `moon check --target native` must stay clean there. `design/README.md` records the call-shape gotchas found while writing it.
+- `README.md` is **English** (GitHub-facing, standard library README). The notes, `design/README.md` and `docs/agents/*` stay in Chinese.
+- MoonBit toolchain: **0.1.20260920** (core `0.10.14`), dependency `moonbitlang/async@0.22.4`. Note async 0.22.4 needs the new core (older cores lack `eprintln`) — the toolchain was already upgraded via `moon upgrade`.
+- After touching FFI or the C stub you must run: `moon check --target native`, `moon test --target native`; finish with `moon fmt && moon info` (and check the `pkg.generated.mbti` diff).
 
-- **tursodb 0.8.2**：`/home/jared/.turso/tursodb`（已加入 `PATH`，通过 `~/.turso/env`）。它**既是引擎也是交互式 SQL shell**。
-  - `select sqlite_version();` 返回 `3.50.4`。这是**兼容性伪装**，并不代表它是 SQLite。
-- **Go**：`go1.27.1`（原 1.26.4；因 `kelindar/search/llama` 要求 go 1.27，已 `go env -w GOTOOLCHAIN=go1.27.1` 升级），`GOPROXY=https://proxy.golang.org,direct`。
-- **网络：沙箱内默认阻断**（`go get` / `git clone` / 下载都失败，代理端口也 `operation not permitted`），但**提权（`require_escalated`）后可访问外网**。需要联网的步骤要么提权执行，要么在笔记里标注为「待联网验证」。
-- 本地已有：turso 源码副本（`/tmp/turso-src`，tag **v0.8.2**，`scripts/fetch-source.sh` 可重拉）、Go 模块缓存里的 `turso.tech/database/tursogo`（**v0.8.2**）与预编译原生库、RAG 资源（`.cache/rag/` 下的 MiniLM GGUF + 本地编译的 `libllama_go.so`）。
-- 本地已有（MoonBit 相关）：`moonbitlang/async` **v0.22.4** 源码副本（`/tmp/async-0224`，tag `v0.22.4`，`git clone --branch v0.22.4 https://github.com/moonbitlang/async` 可重拉）；`moon` 工具链在 `/home/jared/.moon/bin/moon`。用户自己的 PG 驱动工程在 `/home/jared/projects/moonpg`（pin 的是 `moonbitlang/async@0.19.0`，**不要擅自升级它的依赖**）。
-- 本地仍没有：`turso` 云 CLI、`sqlite3` 二进制。
-- 沙箱会拒绝 `rm -f` 之类的破坏性命令；用 `mktemp -d` 建临时目录，清理交给用户。
+## Environment (measured 2026-10-11 — re-verify before relying on it)
 
-## 目录约定
+- **tursodb 0.8.2**: `/home/jared/.turso/tursodb` (already on `PATH` via `~/.turso/env`). It is **both the engine and an interactive SQL shell**.
+  - `select sqlite_version();` returns `3.50.4`. That is a **compatibility disguise**, not proof that it is SQLite.
+- **Go**: `go1.27.1` (was 1.26.4; upgraded because `kelindar/search/llama` requires go 1.27 — `go env -w GOTOOLCHAIN=go1.27.1`), `GOPROXY=https://proxy.golang.org,direct`.
+- **Network is blocked inside the sandbox by default** (`go get` / `git clone` / downloads fail, and the proxy port returns `operation not permitted`), but **works with escalation (`require_escalated`)**. Anything that needs the network must either be escalated or marked "needs network verification" in the notes.
+- Already on disk: a copy of the Turso source (`/tmp/turso-src`, tag **v0.8.2**; `scripts/fetch-source.sh` re-fetches it), `turso.tech/database/tursogo` in the Go module cache (**v0.8.2**) plus its prebuilt native libraries, and RAG assets (MiniLM GGUF under `.cache/rag/` + a locally built `libllama_go.so`).
+- Already on disk (MoonBit side): a copy of `moonbitlang/async` **v0.22.4** (`/tmp/async-0224`; re-fetch with `git clone --branch v0.22.4 https://github.com/moonbitlang/async`); the `moon` toolchain is at `/home/jared/.moon/bin/moon`. The user's own PG driver lives at `/home/jared/projects/moonpg` (pinned to `moonbitlang/async@0.19.0` — **do not upgrade its dependencies**).
+- Still missing locally: the `turso` cloud CLI, a `sqlite3` binary.
+- The sandbox refuses destructive commands such as `rm -f`; create temp dirs with `mktemp -d` and leave cleanup to the user.
+- **git**: the repo is a real git repo (`origin` = `git@github.com:jaredzhou/mturso.git`, branch `main`) — but `.git` is read-only inside the sandbox, so `git add` / `commit` / `push` / `fetch` need escalation. Push with `git push origin main`.
 
-- **MoonBit 模块（根目录）**：`moon.mod`（模块名 `jaredzhou/mturso`）、`moon.pkg`（根包 + 最终链接参数）、`mturso.mbt`（facade）、`mturso_test.mbt`（黑盒测试）、`pkg.generated.mbti`（`moon info` 生成，要提交）。
-- `ffi/` —— **独立的 FFI 子包**：`moon.pkg`（native-stub + link）、`ffi.mbt`（raw `extern "c"`）、`stub.c`（C 实现）、`turso.h`（vendored C ABI 头）、`pkg.generated.mbti`。
-- `libs/` —— 仓库内的 Turso C 动态库（`libturso_sync_sdk_kit.so`，**20MB**）+ 它的 `.sha256`。链接路径由 `scripts/fetch-turso-lib.sh` 写入 `moon.pkg`；换机器或换仓库位置就跑那个脚本。（不想把 20MB 放进版本库的话，把 `libs/` 加进 `.gitignore`，用脚本按需拉取。）
-- `_build/` —— MoonBit 构建产物，**不要提交**（已在 `.gitignore`）。
-- `notes/` —— 研究笔记，**一个主题一个文件**（`architecture.md`、`source-walkthrough.md`、`go-sdk.md`、`turso-binding-guide.md`）。
-- `examples/` —— 可直接运行的示例；`examples/tursodb-basics.sh`（CLI）、`examples/go-sdk/`（Go SDK）、`examples/c-abi-worker/`（C ABI 的「工作线程 + 门铃」最小骨架，150 行，已实测）。
-- `scripts/` —— 辅助脚本：`fetch-source.sh`（克隆对齐版本的引擎源码）、`fetch-rag-assets.sh`（模型）、`fetch-rag-corpus.sh`（英文语料）、`fetch-rag-corpus-zh.sh`（中文语料）、`build-llama-lib.sh`（原生 embedding 库）。
-- 根目录放 `AGENTS.md`、`README.md`。
-- 临时数据库一律放 `mktemp -d` 出来的目录里，**不要提交 `*.db` / `*.db-log` / `*.db-wal` 等文件**。
-  Go 相关产物（`examples/go-sdk/*.db`、模块缓存）也不要提交。
+## Layout conventions
 
-## 常用命令（均已实测）
+- **The MoonBit module (repo root)**: `moon.mod` (module `jaredzhou/mturso`), `moon.pkg` (root package + final link flags), `mturso.mbt` (facade), `mturso_test.mbt` (black-box tests), `pkg.generated.mbti` (generated by `moon info`, commit it).
+- `ffi/` — **a separate FFI package**: `moon.pkg` (native-stub + link), `ffi.mbt` (raw `extern "c"`), `stub.c` (C implementation), `turso.h` (vendored C ABI header), `pkg.generated.mbti`.
+- `libs/` — the Turso C shared library checked into the repo (`libturso_sync_sdk_kit.so`, **20 MB**) plus its `.sha256`. Link paths are written into `moon.pkg` by `scripts/fetch-turso-lib.sh`; re-run that script on a new machine or after moving the repo. (If you would rather not version a 20 MB blob, add `libs/` to `.gitignore` and fetch it on demand.)
+- `_build/` — MoonBit build output, **never commit** (already in `.gitignore`).
+- `docs/agents/` — the agent-skills config (issue tracker, triage labels, domain docs layout).
+- `notes/` — research notes, **one topic per file** (`architecture.md`, `source-walkthrough.md`, `go-sdk.md`, `turso-binding-guide.md`).
+- `examples/` — runnable examples: `examples/tursodb-basics.sh` (CLI), `examples/go-sdk/` (Go SDK), `examples/c-abi-worker/` (minimal C ABI "worker thread + doorbell" skeleton, ~150 lines, measured).
+- `scripts/` — helper scripts: `fetch-source.sh` (clone the matching engine source), `fetch-turso-lib.sh` (copy the C library + rewrite both link paths), `fetch-rag-assets.sh` (model), `fetch-rag-corpus.sh` / `fetch-rag-corpus-zh.sh` (English / Chinese corpora), `build-llama-lib.sh` (native embedding library).
+- Root files: `AGENTS.md`, `README.md`.
+- Temp databases always go in a `mktemp -d` directory; **never commit `*.db` / `*.db-log` / `*.db-wal`**. Same for Go artifacts (`examples/go-sdk/*.db`, module caches).
+
+## Common commands (all verified)
 
 ```bash
-# --- MoonBit 绑定（jaredzhou/mturso）---
-moon check --target native                  # 类型检查
-moon test  --target native                  # → Total tests: 1, passed: 1
-moon fmt && moon info                       # 格式化 + 生成 pkg.generated.mbti
+# --- the MoonBit binding (jaredzhou/mturso) ---
+moon check --target native                  # type check
+moon test  --target native                  # → Total tests: 6, passed: 6
+moon fmt && moon info                       # format + regenerate pkg.generated.mbti
 
-# 版本
+# version
 /home/jared/.turso/tursodb --version            # Turso 0.8.2
 
-# 内存库执行一条 SQL
+# one statement against an in-memory database
 /home/jared/.turso/tursodb :memory: "select 1+1;"
 
-# 文件库执行多条 SQL（默认 pretty 表格输出）
+# several statements against a file database (pretty table output by default)
 d=$(mktemp -d)
 /home/jared/.turso/tursodb "$d/demo.db" \
   "create table t(id integer primary key, name text);
    insert into t(name) values ('alice'),('bob');
    select * from t;"
 
-# 输出模式：pretty（默认）/ list / line
+# output modes: pretty (default) / list / line
 /home/jared/.turso/tursodb -m list :memory: "select 1 as a, 2 as b;"
 
-# 交互式 shell 的元命令（. 开头）
+# interactive shell meta-commands (leading dot)
 printf '.help\n.quit\n' | /home/jared/.turso/tursodb "$d/demo.db"
 
-# 完整示例
+# full example
 bash examples/tursodb-basics.sh
 ```
 
-其他运行形态：`--mcp`（内置 MCP server）、`--sync-server <addr>` / `--sync-dir <path>`（同步服务）、`-v/--vfs <io_uring|memory|syscall>`。这些会**监听端口或加载本地文件**，除非有明确任务否则不要启动。
+Other run modes: `--mcp` (built-in MCP server), `--sync-server <addr>` / `--sync-dir <path>` (sync service), `-v/--vfs <io_uring|memory|syscall>`. These **listen on ports or load local files** — don't start them unless the task calls for it.
 
-## 研究约定
+## Research conventions
 
-- 每条关于「内部实现」的结论都要**可追溯**：要么给出源码路径，要么给出获取该结论的命令（例如从二进制里提取字符串的证据）。
-- 笔记里区分三档：**实测**（跑过）、**源码/二进制证据**（引用了路径或命令）、**推测**（明确写「推测」）。无法验证的标 `TODO(待验证)`。
-- 示例脚本必须能直接 `bash` 跑通；跑不通的示例不要放进 `examples/`。
-- 检索文本/文件名优先用 `rg`。
+- Every claim about internals must be **traceable**: cite a source path, or the command that produced the evidence (e.g. extracting strings from the binary).
+- Notes distinguish three levels: **measured** (actually ran it), **source/binary evidence** (path or command cited), **inferred** (explicitly labelled as such). Anything unverifiable gets `TODO(verify)`.
+- Example scripts must run as-is with `bash`; anything that doesn't run doesn't belong in `examples/`.
+- Use `rg` for searching text and filenames.
 
-## 研究路线图（backlog）
+## Research roadmap (backlog)
 
-- **Go SDK** ✅：模块是 `turso.tech/database/tursogo`（驱动名 `turso`）。综合示例 `examples/go-sdk/`（子命令 `basic` / `cdc` / `vector` / `concurrent` / `mvcc` / `conflict` / `retry` / `sync` / `rag`）已全部跑通，覆盖 CDC、WAL 并发写对照（含单连接基线、忙等待开关、易主与 CPU 开销实测）、MVCC `BEGIN CONCURRENT` 与写写冲突语义、重试预算实测、向量检索、本地 `tursodb --sync-server` 的 push/pull/checkpoint/stats、以及 RAG。待办：Turso Cloud 真实远端 + token、`experimental=` / `async=1` / 加密选项的实测。
-2. **源码通读** ✅（第一遍）：已在 tag v0.8.2 上按管线总结（解析 → translate → VDBE → 执行）与存储/并发层，见 `notes/source-walkthrough.md`。
-3. **特性深挖**（进行中）：向量检索、FTS（基于 tantivy）、JSON/JSONB、自定义类型、物化视图（incremental/DBSP）、CDC、静态加密、同步协议、MCP server、Postgres 前端。
-4. **RAG 演示** ✅：`examples/go-sdk/` 的 `rag` 子命令 —— 本地 embedding 模型对真实文章（古腾堡，公有领域）分块嵌入 → 存入 Turso 向量 → 最近邻检索 → 组装上下文。支持中英：英文用 MiniLM-L6-v2（`data/`），中文用 bge-small-zh-v1.5（`data-zh/`）。
+1. **Go SDK** ✅: module `turso.tech/database/tursogo` (driver name `turso`). The comprehensive example `examples/go-sdk/` (subcommands `basic` / `cdc` / `vector` / `concurrent` / `mvcc` / `conflict` / `retry` / `sync` / `rag`) all runs, covering CDC, a WAL concurrent-write comparison (single-connection baseline, busy-wait switch, lock handoff and CPU cost measurements), MVCC `BEGIN CONCURRENT` and write-write conflict semantics, retry-budget measurements, vector search, push/pull/checkpoint/stats against a local `tursodb --sync-server`, and RAG. Open: a real Turso Cloud remote + token, and measuring `experimental=` / `async=1` / encryption options.
+2. **Source walkthrough** ✅ (first pass): summarised against tag v0.8.2 along the pipeline (parse → translate → VDBE → execute) plus the storage/concurrency layers — see `notes/source-walkthrough.md`.
+3. **Feature deep dives** (in progress): vector search, FTS (tantivy-based), JSON/JSONB, custom types, materialized views (incremental/DBSP), CDC, encryption at rest, the sync protocol, the MCP server, the Postgres frontend.
+4. **RAG demo** ✅: the `rag` subcommand in `examples/go-sdk/` — chunk and embed real articles (Gutenberg, public domain) with a local embedding model → store them in Turso vectors → nearest-neighbour retrieval → assemble the context. English uses MiniLM-L6-v2 (`data/`), Chinese uses bge-small-zh-v1.5 (`data-zh/`).
+5. **MoonBit binding v0.2** (planned): implement the `design/` spec — typed values, parameter binding, materialized row sets, transaction objects, retry helpers, connection pool. The work is broken into tickets in GitHub Issues; the spec is issue #1.
 
-## 注意 / Gotchas
+## Gotchas
 
-- **MoonBit 链接参数要挂在「会做最终链接的那个包」上**：`ffi/moon.pkg` 的 `link` 只影响它自己参与链接时；`moon test` 的最终链接发生在根包，所以 `cc-link-flags`（`-L`/`-l`/`-Wl,-rpath`）**同时写在根 `moon.pkg`**。已带 rpath，所以测试不需要 `LD_LIBRARY_PATH`。
-- Turso 的 C 动态库已复制到仓库内 `libs/`（源头是 Go SDK 的分发包 `turso-go-platform-libs@v0.8.2`；`nm -D` 可确认它导出 77 个 `turso_*` 符号）。`moon.pkg` / `ffi/moon.pkg` 里的 `-L` 与 rpath 都指向 `libs/`，**换机器或换仓库位置要重新跑 `scripts/fetch-turso-lib.sh`**（它会重写这两处路径）。
-- C 侧约定（`ffi/stub.c`）：**从不向 MoonBit 返回 NULL**（失败通过 `mturso_last_error()` 报，空串=成功）；句柄是外部对象 + finalizer；**同一个语句不要混用 `step` 和 `execute`**。
-- MoonBit 侧：**不能给别的包的类型加方法**（`Cannot define method ... for foreign type`）——所以 facade 自己定义 `pub struct Conn` 包住 `@ffi.Conn`。
-- **网络被阻断**：不要设计依赖联网的步骤而不加说明。
-- Go 构建缓存默认在 `~/.cache/go-build`（沙箱内不可写）：跑 Go 示例时用 `GOCACHE=/tmp/gocache go run .`。
-- `go build ./...` 可能报 `error obtaining VCS status`（因为 `.git` 是空目录）：加 `-buildvcs=false`。
-- `tursodb` 是预览版引擎，大量特性藏在 `--experimental-*` 开关后面（views、custom-types、vacuum、attach、without-rowid、multiprocess-wal 等），**不要假设与 SQLite 生产级等价**。
-- 仓库目前**还不是一个真正的 git 仓库**：`.git/` 为空目录且属主不可写。需要版本管理时先与用户确认（`git init` 可能因目录权限失败）。
-- 不要把 `--sync-server` / `--mcp` 绑定到对外地址。
+- **MoonBit link flags belong to the package that performs the final link**: `ffi/moon.pkg`'s `link` only applies when that package is part of the link; the final `moon test` link happens in the root package, so `cc-link-flags` (`-L` / `-l` / `-Wl,-rpath`) is written into the **root `moon.pkg`** as well. The rpath is baked in, so tests need no `LD_LIBRARY_PATH`. The same flags are **not propagated to downstream consumers** — a consumer must repeat them in its own root package (documented in `README.md`).
+- Turso's C shared library is vendored in `libs/` (originally from the Go SDK's `turso-go-platform-libs@v0.8.2`; `nm -D` shows it exports 77 `turso_*` symbols). `moon.pkg` / `ffi/moon.pkg` point `-L` and rpath at `libs/`, so **moving the repo or changing machines means re-running `scripts/fetch-turso-lib.sh`** (it rewrites both paths).
+- C-side conventions (`ffi/stub.c`): **never return NULL to MoonBit** (failures are reported through `mturso_last_error()`, where an empty string means success); handles are external objects with finalizers; **never mix `step` and `execute` on the same statement**.
+- MoonBit side: **you cannot add methods to a type owned by another package** (`Cannot define method ... for foreign type`) — so the facade defines its own struct wrapping the `@ffi` handle.
+- **Network is blocked**: don't design steps that need it without saying so.
+- The Go build cache defaults to `~/.cache/go-build` (not writable in the sandbox): run Go examples with `GOCACHE=/tmp/gocache go run .`.
+- `go build ./...` can fail with `error obtaining VCS status` (the `.git` directory used to be an empty dir): add `-buildvcs=false`.
+- `tursodb` is a preview engine; many features sit behind `--experimental-*` flags (views, custom-types, vacuum, attach, without-rowid, multiprocess-wal, …). **Don't assume parity with production SQLite.**
+- Don't bind `--sync-server` / `--mcp` to a public address.
