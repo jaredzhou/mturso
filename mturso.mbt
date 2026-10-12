@@ -9,10 +9,9 @@
 //   - `query_blocking` / `exec_blocking` 是同步版本：在调用线程上直接跑，不需要 async 运行时。
 
 ///|
-/// 绑定层错误。
-pub suberror TursoError {
-  TursoError(String)
-}
+/// 值类型从子包转出，使用方只写 `@mturso.Value` / `@mturso.Column`
+/// （错误类型在 errors.mbt，值这一层的 trait 在 traits.mbt）。
+pub using @value {type Value, type Column}
 
 ///|
 /// 数据库句柄。一个 `Database` 可以开出多个 `Connection`。

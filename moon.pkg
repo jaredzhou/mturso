@@ -1,7 +1,9 @@
 import {
   "jaredzhou/mturso/ffi",
+  "jaredzhou/mturso/value",
   "moonbitlang/async/raw_fd",
   "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/json",
 }
 
 import {
@@ -11,6 +13,12 @@ import {
 // 绑定依赖 Turso 的 C ABI（native 动态库），所以本模块只有 native 目标。
 
 supported_targets = "+native"
+
+// 79 = implicit_impl_as_method：derive(Eq, Debug) 在这个 core 版本上的既有告警。
+//  9 = struct_never_constructed：`Row` 的字段是私有的，只有查询结果会构造它 ——
+//      那部分（Rows）是 ticket #3，落地时把 9 从这里去掉。
+
+warnings = "-79-9"
 
 options(
   // 最终链接发生在根包（test / 可执行产物），所以链接参数要挂在这里。

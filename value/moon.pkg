@@ -1,0 +1,7 @@
+// 值类型（Value / Column）。纯 MoonBit，不碰 C 层。
+// 根包用 `pub using @value { type Value, type Column }` 转出，使用方只写 @mturso.Value。
+supported_targets = "+native"
+
+// 79 = implicit_impl_as_method：derive(Eq, Debug) 在这个 core 版本上的既有告警。
+
+warnings = "-79"
