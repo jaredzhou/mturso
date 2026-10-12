@@ -59,6 +59,12 @@ Background: Turso is a **Rust rewrite of SQLite**; upstream is `github.com/turso
 - Root files: `AGENTS.md`, `README.md`.
 - Temp databases always go in a `mktemp -d` directory; **never commit `*.db` / `*.db-log` / `*.db-wal`**. Same for Go artifacts (`examples/go-sdk/*.db`, module caches).
 
+## Commit conventions
+
+- **Commit messages are written in English**, even though the notes and design docs are Chinese. Subject line in the imperative, prefixed with a conventional type: `feat:` / `fix:` / `docs:` / `refactor:` / `test:` / `ci:` / `chore:`. Mark breaking changes to the public API with `!` (e.g. `refactor!: ...`) and explain the migration in the body.
+- Put the reasoning and the verification you ran in the body — future sessions read commit bodies as much as the code.
+- One logical change per commit; keep `moon check --target native --deny-warn` and `moon test --target native --deny-warn` green before committing.
+
 ## Common commands (all verified)
 
 ```bash
