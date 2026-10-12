@@ -3,6 +3,7 @@
 MoonBit bindings for [Turso](https://turso.tech) — the Rust rewrite of SQLite — built on the official C ABI (`turso.h`). Native target, SQLite-compatible SQL.
 
 ![target](https://img.shields.io/badge/target-native-blue)
+![platforms](https://img.shields.io/badge/platforms-linux%20%7C%20macOS%20%7C%20windows%20%28planned%29%20%7C%20wasm%20%28planned%29-lightgrey)
 ![turso](https://img.shields.io/badge/turso-0.8.2-informational)
 ![license](https://img.shields.io/badge/license-Apache--2.0-green)
 
@@ -25,6 +26,23 @@ db.close()
 - **SQLite-compatible** — `select sqlite_version()` reports `3.50.4`; DDL/DML and `begin`/`commit`/`rollback` work as you would expect.
 - **Blocking API available** — `query_blocking` / `exec_blocking` run on the calling thread, no async runtime required.
 - **Engine included** — the Turso shared library ships with the repo (`libs/`, ~20 MB); no separate engine install.
+
+## Platform support
+
+| Platform / target | Status | Notes |
+| --- | --- | --- |
+| **Linux x86_64** | ✅ tested | `moon test --target native` green; CI runs it on every push and PR |
+| **Linux aarch64** | ✅ expected | same C ABI and same POSIX stub; `scripts/fetch-turso-lib.sh` handles `linux_arm64`. Not covered by CI |
+| **macOS (x86_64 / arm64)** | ✅ expected | Turso ships `.dylib`s for both; the stub is POSIX (pthreads + pipes). Not covered by CI |
+| **Windows x64** | 🚧 planned | Turso ships a `.dll` (MSVC) but only as a DLL — no import library — so the binding has to load it at runtime, and the C stub needs Win32 threads/events. Tracked in [#11](https://github.com/jaredzhou/mturso/issues/11) |
+| **WebAssembly / edge** | 🚧 planned | Feasible and prototyped: moonbit compiles the library *and your app* to `wasm`, with a small host shim bridging to Turso's own wasm build. Tracked in [#10](https://github.com/jaredzhou/mturso/issues/10) |
+| **Windows arm64** | ❌ not available | `windows_arm64/turso_sync_sdk_kit.dll` in the platform-libs package is a 0-byte placeholder |
+| **wasm/js without a host** | ❌ n/a | The binding needs a host that owns the engine; `moonrun` / `moonx` inject only the MoonBit runtime's imports, so they cannot host it |
+
+What "wasm" means concretely (measured in the spike, branch `spike/wasm-browser`): your MoonBit program imports the
+binding, the binding imports a handful of host functions (`exec` / `result_len` / `result_copy` / `log`), and the host
+implements them on top of Turso — in the browser through `@tursodatabase/database-wasm`, on the server/embedded side
+through `wasmtime` plus Turso's C ABI. The same wasm module ran unchanged under Node (two flavours) and wasmtime.
 
 ## Installation
 
@@ -213,12 +231,14 @@ async fn demo(conn : @mturso.Connection) -> Unit raise @mturso.TursoError {
 - **No parameter binding yet** — values must be written into SQL as literals; positional `params?` lands in the next version.
 - **Results are still text** — `query` returns a tab-separated string, with `NULL` rendered as `NULL` and `BLOB` as `<blob>`; there is no typed accessor yet.
 - **No cancellation or timeouts** — once submitted, a statement runs to completion (Turso's C ABI has no cross-thread cancel).
-- **Native only** — it depends on a C shared library, so wasm/js targets are not supported.
+- **Native target today** — it links a C shared library, so the published package is native-only; Windows and wasm are planned (see Platform support above).
 - **Preview engine** — Turso 0.8.2 is a preview release with many features behind experimental flags; don't treat it as production SQLite.
 
 ## Roadmap
 
 Typed values (`Value` / `Column`), parameter binding, materialized row sets (`Rows` / `Row`), real transaction objects (`Tx` / `begin_tx`, including `BEGIN CONCURRENT`), retry helpers (`retry_tx` / `retry_stmt`) and a connection pool (`Pool`) are already written as a compiler-checked design spec (`design/`, `moon check` clean). They land in this order: value subpackage → typed C-side buffering → traits → pool + retry, shaped to match [`jaredzhou/moonpg`](https://github.com/jaredzhou/moonpg).
+
+On the platform side: Windows x64 ([#11](https://github.com/jaredzhou/mturso/issues/11)) and WebAssembly / edge ([#10](https://github.com/jaredzhou/mturso/issues/10)) are the two open tracks; both wait on run-time loading of the engine library, and the wasm spike already proved the shape end to end.
 
 ## Development
 
