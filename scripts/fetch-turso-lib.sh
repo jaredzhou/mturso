@@ -4,7 +4,25 @@
 # 不需要联网：库随 Go SDK 分发（turso-go-platform-libs），本机拉过一次 Go 依赖就有。
 # 也可以手动指定源文件：
 #   TURSO_LIB_SRC=/path/to/libturso_sync_sdk_kit.so bash scripts/fetch-turso-lib.sh
+#
+# 只重写链接路径（库已在仓库内，例如 CI 检出到了别的目录）：
+#   bash scripts/fetch-turso-lib.sh --rewrite-only
 set -euo pipefail
+
+REWRITE_ONLY=0
+for arg in "$@"; do
+  case "$arg" in
+    --rewrite-only) REWRITE_ONLY=1 ;;
+    -h | --help)
+      sed -n '2,13p' "$0"
+      exit 0
+      ;;
+    *)
+      echo "未知参数: $arg（可用: --rewrite-only）" >&2
+      exit 1
+      ;;
+  esac
+done
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LIBS_DIR="$REPO_ROOT/libs"
@@ -18,19 +36,26 @@ case "$(uname -s)/$(uname -m)" in
   *) echo "不支持的平台: $(uname -s)/$(uname -m)" >&2; exit 1 ;;
 esac
 
-SRC="${TURSO_LIB_SRC:-}"
-if [ -z "$SRC" ]; then
-  MODCACHE="${GOMODCACHE:-$(go env GOMODCACHE 2>/dev/null || true)}"
-  SRC="$MODCACHE/github.com/tursodatabase/turso-go-platform-libs@v0.8.2/libs/$SUB/$LIB"
+if [ "$REWRITE_ONLY" -eq 1 ]; then
+  if [ ! -f "$LIBS_DIR/$LIB" ]; then
+    echo "libs/$LIB 不在仓库里；去掉 --rewrite-only 先复制一次。" >&2
+    exit 1
+  fi
+  echo "只重写链接路径（库已在仓库内: libs/$LIB）"
+else
+  SRC="${TURSO_LIB_SRC:-}"
+  if [ -z "$SRC" ]; then
+    MODCACHE="${GOMODCACHE:-$(go env GOMODCACHE 2>/dev/null || true)}"
+    SRC="$MODCACHE/github.com/tursodatabase/turso-go-platform-libs@v0.8.2/libs/$SUB/$LIB"
+  fi
+  if [ ! -f "$SRC" ]; then
+    echo "找不到 Turso 库: $SRC" >&2
+    echo "请用 TURSO_LIB_SRC=<path> 指定，或先拉取 Go 依赖（go get turso.tech/database/tursogo）。" >&2
+    exit 1
+  fi
+  cp -f "$SRC" "$LIBS_DIR/$LIB"
+  echo "已复制: $LIBS_DIR/$LIB"
 fi
-if [ ! -f "$SRC" ]; then
-  echo "找不到 Turso 库: $SRC" >&2
-  echo "请用 TURSO_LIB_SRC=<path> 指定，或先拉取 Go 依赖（go get turso.tech/database/tursogo）。" >&2
-  exit 1
-fi
-
-cp -f "$SRC" "$LIBS_DIR/$LIB"
-echo "已复制: $LIBS_DIR/$LIB"
 
 # 只替换 cc-link-flags 那一行的值（链接参数必须挂在根包与 ffi 包两处）
 FLAGS="-L$LIBS_DIR -lturso_sync_sdk_kit -Wl,-rpath,$LIBS_DIR"
