@@ -22,7 +22,9 @@ jobs:
           - ubuntu-latest # linux x86_64
           - ubuntu-24.04-arm # linux arm64
           - macos-latest # macOS arm64（M 系列）
-          - macos-15-intel # macOS x86_64（Intel）
+          # 没有 macOS x86_64（Intel）这一条：MoonBit 不发布 darwin-x86_64 工具链
+          # （安装脚本直接报 `Unsupported platform: Darwin x86_64`，
+          #  且 binaries/latest/moonbit-darwin-x86_64.tar.gz 是 403）。
     runs-on: ${{ matrix.os }}
 
     steps:
