@@ -1,8 +1,7 @@
 # mturso
 
-MoonBit bindings for [Turso](https://turso.tech) — the Rust rewrite of SQLite — built on the official C ABI (`turso.h`). Native target, SQLite-compatible SQL.
+MoonBit bindings for [Turso](https://turso.tech) — the Rust rewrite of SQLite — built on the official C ABI (`turso.h`), with SQLite-compatible SQL. Linux and macOS today; Windows and WebAssembly are on the way.
 
-![target](https://img.shields.io/badge/target-native-blue)
 ![platforms](https://img.shields.io/badge/platforms-linux%20%7C%20macOS%20%7C%20windows%20%28planned%29%20%7C%20wasm%20%28planned%29-lightgrey)
 ![turso](https://img.shields.io/badge/turso-0.8.2-informational)
 ![license](https://img.shields.io/badge/license-Apache--2.0-green)

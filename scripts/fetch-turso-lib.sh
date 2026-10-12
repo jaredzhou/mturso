@@ -61,7 +61,12 @@ fi
 FLAGS="-L$LIBS_DIR -lturso_sync_sdk_kit -Wl,-rpath,$LIBS_DIR"
 for pkg in "$REPO_ROOT/moon.pkg" "$REPO_ROOT/ffi/moon.pkg"; do
   [ -f "$pkg" ] || continue
-  sed -i -E "s#(\"cc-link-flags\": \")[^\"]*(\")#\1$FLAGS\2#" "$pkg"
+  # GNU sed 与 BSD sed（macOS）的 -i 不一样：BSD 的 -i 会吃掉后面的 -E 当备份后缀。
+  if sed --version >/dev/null 2>&1; then
+    sed -i -E "s#(\"cc-link-flags\": \")[^\"]*(\")#\1$FLAGS\2#" "$pkg"
+  else
+    sed -i '' -E "s#(\"cc-link-flags\": \")[^\"]*(\")#\1$FLAGS\2#" "$pkg"
+  fi
   echo "已更新: ${pkg#"$REPO_ROOT"/}"
 done
 
