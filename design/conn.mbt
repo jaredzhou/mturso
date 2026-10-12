@@ -25,11 +25,10 @@ declare pub fn Database::connect(self : Database) -> Connection raise TursoError
 ///|
 /// 关闭数据库（之后不能再用它开连接）。
 ///
-/// **还有活着的 `Connection` 时抛 `TursoError::ConnectionError`**：C 侧的
-/// `turso_database_deinit` 要求之后没人再碰这个 database，而显式 close 是逻辑
-/// 动作、GC 挡不住 use-after-free，所以这里必须显式挡掉。
-/// 顺序：先 `Pool::close()` / `conn.close()`，再 `db.close()`。
-declare pub fn Database::close(self : Database) -> Unit raise TursoError
+/// **级联**：先关掉本库开出的所有连接（join 掉各自的工作线程），再
+/// `turso_database_deinit`（见 ADR-0001）。签名是 `-> Unit`（不抛、幂等），
+/// 所以可以 `defer db.close()`。
+declare pub fn Database::close(self : Database) -> Unit
 
 ///|
 /// 连接是否已关闭（不抛：用来做幂等检查）。

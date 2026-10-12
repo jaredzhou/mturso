@@ -67,7 +67,8 @@ pub(open) trait Rows {
   async fn has_next(Self) -> Bool raise TursoError
   fn get_row(Self) -> Row raise TursoError
   fn columns(Self) -> Array[@value.Column]
-  async fn close(Self) -> Unit raise TursoError
+  /// 同步、不抛、幂等 —— 就是为了能 `defer rows.close()`。
+  fn close(Self) -> Unit
 }
 
 ///|
@@ -83,6 +84,10 @@ pub(open) trait QueryExecutor {
 
 ///|
 /// 能关闭的东西。
+///
+/// 签名固定为 `fn close(Self) -> Unit`：**同步、不抛、幂等**，所以调用方一律用
+/// `defer x.close()` 收尾（而不是手写 try/catch 里的收尾）。要抛错的收尾
+/// （`Tx::commit` / `rollback`）不放进这个 trait。
 pub(open) trait Closer {
   fn close(Self) -> Unit
 }

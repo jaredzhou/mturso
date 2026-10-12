@@ -5,19 +5,19 @@
 // 目的就是让编译器验证「这些签名真的能写出调用代码」。
 
 ///|
-fn usage_open(path : String) -> Database raise TursoError {
+fn usage_open(path : String) -> Unit raise TursoError {
   let db = Database::open(path)
+  defer db.close()
   let conn = db.connect()
+  defer conn.close()
   println("sqlite_version= \{conn.sqlite_version()}")
-  conn.close()
-  db.close()
-  db
 }
 
 ///|
 async fn usage_query(conn : Connection) -> Unit raise TursoError {
   // 行读取器：拉取式，用完 close（幂等）
   let rows = conn.query("select id, name from users where id > ?1", params=[1])
+  defer rows.close()
   let cols : Array[@value.Column] = rows.columns()
   for col in cols {
     println("column: \{col.name} \{col.decltype}")
@@ -28,7 +28,6 @@ async fn usage_query(conn : Connection) -> Unit raise TursoError {
     let name : String = row.get_by_name("name")
     println("\{id}: \{name}")
   }
-  rows.close()
 }
 
 ///|
@@ -56,8 +55,8 @@ async fn usage_execute(conn : Connection) -> Unit raise TursoError {
   let r = conn.execute(
     "insert into users(name) values ('alice'); insert into users(name) values ('bob')",
   )
+  defer r.close()
   println("affected= \{r.affected_rows()}")
-  r.close()
   println("last rowid= \{conn.last_insert_rowid()}")
 }
 
@@ -102,10 +101,11 @@ async fn usage_tx(
 ///|
 async fn usage_pool(db : Database) -> Unit raise TursoError {
   let pool = Pool::new(db, config=PoolConfig::new(max_conns=4, min_idle=1))
+  defer pool.close()
 
   // 隐式：query/execute 自动 acquire → 用完自动 release
   let rows = pool.query("select 1")
-  rows.close()
+  defer rows.close()
 
   // 显式：借出来，自己决定什么时候还
   let pc = pool.acquire()
@@ -113,9 +113,6 @@ async fn usage_pool(db : Database) -> Unit raise TursoError {
   println("total= \{pool.total()} idle= \{pool.idle()}")
   println("acquire= \{pool.stats().acquire_count}")
   pc.release()
-
-  pool.close()
-  db.close()
 }
 
 ///|
