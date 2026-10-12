@@ -159,14 +159,14 @@ def log(ptr, length):
 
 i32 = ValType.i32()
 # wasmtime-py 的 Instance 要按模块的导入顺序给一个列表（不是 dict）：
-# 模块里依次是 mtuoso.result_copy / log / result_len / exec（WebAssembly.Module.imports 查过）
+# 模块里依次是 mtuoso.result_copy / result_len / log / exec（WebAssembly.Module.imports 查过）
 imports = [
     Func(store, FuncType([i32, i32], [i32]), result_copy),
-    Func(store, FuncType([i32, i32], []), log),
     Func(store, FuncType([], [i32]), result_len),
+    Func(store, FuncType([i32, i32], []), log),
     Func(store, FuncType([i32, i32], [i32]), exec_),
 ]
 instance = Instance(store, module, imports)
 state["mem"] = instance.exports(store)["memory"]
 print("runtime: wasmtime (python), host: Python + Turso C ABI via ctypes")
-instance.exports(store)["mt_demo"](store)
+instance.exports(store)["_start"](store)

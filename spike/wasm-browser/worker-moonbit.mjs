@@ -54,7 +54,7 @@ const imports = {
 const { instance } = await WebAssembly.instantiate(wasmBytes, imports);
 state.mem = instance.exports.memory;
 const started = Date.now();
-instance.exports.mt_demo();
+instance.exports._start();
 Atomics.store(ctrl, 3, 1);
 Atomics.notify(ctrl, 0);
-parentPort.postMessage(`[worker A] mt_demo 返回，总耗时 ${Date.now() - started}ms`);
+parentPort.postMessage(`[worker A] 程序跑完，总耗时 ${Date.now() - started}ms`);

@@ -5,9 +5,10 @@ import {
 supported_targets = "+wasm"
 
 options(
+  "is-main": true,
   link: {
     "wasm": {
-      "exports": [ "mt_demo" ],
+      "exports": [ "_start" ],
       "export-memory-name": "memory",
     },
   },

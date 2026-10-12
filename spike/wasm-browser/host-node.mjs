@@ -42,7 +42,7 @@ async function runMoonBit(host) {
     makeImports(state, host),
   );
   state.mem = instance.exports.memory;
-  return instance.exports.mt_demo();
+  return instance.exports._start();
 }
 
 // ---- pass 1：记录 MoonBit 发出的 SQL -----------------------------------------
