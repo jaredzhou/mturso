@@ -91,6 +91,64 @@ cd moonbit && moon build --target wasm
 [worker A] mt_demo 返回，总耗时 18ms
 ```
 
+## 其他 runtime：wasmtime（已实测，和 Node 一样）
+
+我们的 wasm 是标准 wasm1（导入 4 个函数 + 导出 `memory` / `mt_demo`），**与 runtime 无关**：
+只要宿主把那 4 个导入接上，Node/V8、浏览器、wasmtime、wasmer 都一样。
+
+```bash
+uv venv /tmp/wtvenv && uv pip install --python /tmp/wtvenv/bin/python wasmtime
+/tmp/wtvenv/bin/python wasmtime-host.py
+```
+
+输出和 Node 版逐字一致：
+
+```
+runtime: wasmtime (python), host: Python + Turso C ABI via ctypes
+=== MoonBit (wasm) -> Turso ===
+1	alice	revkjavik
+2	bob	shanghai
+2
+42
+```
+
+注意这个宿主里 Turso 走的是 **C ABI**（ctypes 调 `libturso_sync_sdk_kit.so`，调用序列照抄
+`ffi/stub.c` 的 `do_query`），是**同步**的 —— 所以连 Node 版那套「两线程 + Atomics +
+SharedArrayBuffer」都不需要，宿主导入直接同步返回。
+
+**结论：逼出"两个 worker"设计的不是 wasm，而是 Turso 的 JS API 是异步的**（且浏览器包把引擎
+放在它自己的 Worker 里）。宿主侧有同步 Turso 绑定时（Rust / C / C-ABI），MoonBit 侧一行都不用改。
+
+## moonx / moonrun：能跑 wasm，但给不了自定义导入（已实测）
+
+`moonrun` 跑普通 MoonBit wasm 模块是没问题的（不只是 `.mbtx`）：
+
+```bash
+# 一个只有 fn main 的 MoonBit 包，编成 wasm 后直接跑
+moon build --target wasm
+moonrun _build/wasm/debug/build/hello.wasm
+# => hello from a plain MoonBit wasm module
+```
+
+但它注入的是 **MoonBit 运行时自己的导入**（`wasi_snapshot_preview1` 等 + MoonBit ABI，并要求
+`_start`）。所以：
+
+- 带自定义导入的模块（我们的 `extern "wasm" ... = "mturso" "exec"`）在实例化时就挂了：
+
+  ```
+  $ moonrun moonbit/_build/wasm/debug/build/mturso-wasm-spike.wasm
+  Error: failed to instantiate ...
+  Caused by: TypeError: WebAssembly.Instance(): Import #0 "mturso": module is not an object or function
+  ```
+
+- `moonx` 的输入是 `.mbtx` 或 Registry 上的包坐标（直接给 `.wasm` 路径会报
+  `Invalid package coordinate`）；它内部也是编成 wasm 交给同一个 host 跑，因此同样给不了自定义导入。
+
+也就是说：**`moonx` / `moonrun` 是"MoonBit 运行时 + WASI"的宿主，不是通用 wasm 宿主**。
+要跑 mturso 的 wasm 绑定，必须有能接外部引擎的自定义宿主（Node / 浏览器 / wasmtime / 自己嵌）。
+只有当 Turso 侧也被编进同一个模块里（比如把 sdk-kit 编成 wasm32 静态链进去，目前 MoonBit 的
+wasm 后端做不到）才轮得到 `moonrun` 直接跑。
+
 ## 浏览器版（需要你本地验证）
 
 本机没有任何浏览器（`google-chrome` / `chromium` / `firefox` 都不在），也没法 sudo 装，
