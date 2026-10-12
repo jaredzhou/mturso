@@ -33,10 +33,10 @@ db.close()
 | **Linux x86_64** | ✅ tested | `moon test --target native` green; CI runs it on every push and PR |
 | **Linux aarch64** | ✅ tested | CI runs the suite on `ubuntu-24.04-arm` and fetches the `linux_arm64` engine binary (6/6 green) |
 | **macOS arm64** | ✅ tested | CI runs the suite on `macos-latest`; the fetch script also fixes the dylib's `install_name` so the rpath resolves |
-| **macOS x86_64** | ❌ not possible today | MoonBit ships no `darwin-x86_64` toolchain (its installer rejects `Darwin x86_64` and the artifact 404s), so the binding cannot be built for Intel Macs at all |
 | **Windows x64** | 🚧 planned | Turso ships a `.dll` (MSVC) but only as a DLL — no import library — so the binding has to load it at runtime, and the C stub needs Win32 threads/events. Tracked in [#11](https://github.com/jaredzhou/mturso/issues/11) |
 | **WebAssembly / edge** | 🚧 planned | Feasible and prototyped: moonbit compiles the library *and your app* to `wasm`, with a small host shim bridging to Turso's own wasm build. Tracked in [#10](https://github.com/jaredzhou/mturso/issues/10) |
-| **Windows arm64** | ❌ not available | `windows_arm64/turso_sync_sdk_kit.dll` in the platform-libs package is a 0-byte placeholder |
+
+Two combinations are deliberately absent from the table: **macOS x86_64** (MoonBit ships no `darwin-x86_64` toolchain — the installer rejects `Darwin x86_64` and the artifact is a 404 — so the binding cannot be built for Intel Macs at all) and **Windows arm64** (the engine's platform-libs package ships a 0-byte placeholder DLL there).
 
 What "wasm" means concretely (measured in the spike, branch `spike/wasm-browser`): your MoonBit program imports the
 binding, the binding imports a handful of host functions (`exec` / `result_len` / `result_copy` / `log`), and the host
