@@ -93,3 +93,46 @@ test "FromRow：元组按列顺序映射，列元信息可读" {
   assert_true(b == "alice")
   assert_true(c is None)
 }
+
+///|
+test "往返：更宽的整数族 / 浮点 / 字符 / Unit / Ref" {
+  assert_true(ToValue::to_value((1 : Byte)) == @value.Value::Integer(1L))
+  assert_true(ToValue::to_value((2 : Int16)) == @value.Value::Integer(2L))
+  assert_true(ToValue::to_value((3 : UInt)) == @value.Value::Integer(3L))
+  assert_true(ToValue::to_value((4 : UInt16)) == @value.Value::Integer(4L))
+  assert_true(ToValue::to_value((5 : UInt64)) == @value.Value::Integer(5L))
+  assert_true(ToValue::to_value((1.5 : Float)) == @value.Value::Real(1.5))
+  assert_true(ToValue::to_value('a') == @value.Value::Text("a"))
+  assert_true(ToValue::to_value(()) == @value.Value::Null)
+  let r : Ref[Int] = Ref(9)
+  assert_true(ToValue::to_value(r) == @value.Value::Integer(9L))
+
+  let b : Byte = FromValue::from_value(@value.Value::Integer(1L))
+  assert_true(b == (1 : Byte))
+  let i16 : Int16 = FromValue::from_value(@value.Value::Integer(2L))
+  assert_true(i16 == (2 : Int16))
+  let u : UInt = FromValue::from_value(@value.Value::Integer(3L))
+  assert_true(u == (3 : UInt))
+  let u16 : UInt16 = FromValue::from_value(@value.Value::Integer(4L))
+  assert_true(u16 == (4 : UInt16))
+  let u64 : UInt64 = FromValue::from_value(@value.Value::Integer(5L))
+  assert_true(u64 == (5 : UInt64))
+  let c : Char = FromValue::from_value(@value.Value::Text("a"))
+  assert_true(c == 'a')
+  let rr : Ref[Int] = FromValue::from_value(@value.Value::Integer(9L))
+  assert_true(rr.val == 9)
+}
+
+///|
+test "JSON 族：Array / Map 落成 JSON 文本（Value::Text）" {
+  let v = ToValue::to_value([1, 2, 3])
+  assert_true(v is @value.Value::Text(_))
+  let back : Array[Int] = FromValue::from_value(v)
+  assert_true(back == [1, 2, 3])
+
+  let m : Map[String, Int] = { "a": 1 }
+  let mv = ToValue::to_value(m)
+  assert_true(mv is @value.Value::Text(_))
+  let mback : Map[String, Int] = FromValue::from_value(mv)
+  assert_true(mback["a"] == 1)
+}

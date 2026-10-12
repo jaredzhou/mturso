@@ -4,6 +4,8 @@ package "jaredzhou/mturso/design"
 import {
   "jaredzhou/mturso/design/value",
   "moonbitlang/core/debug",
+  "moonbitlang/core/json",
+  "moonbitlang/core/ref",
 }
 
 // Values
@@ -39,7 +41,7 @@ pub impl QueryExecutor for Connection
 pub impl TxBeginner for Connection
 
 pub type Database
-pub fn Database::close(Self) -> Unit raise TursoError
+pub fn Database::close(Self) -> Unit
 pub fn Database::connect(Self) -> Connection raise TursoError
 pub fn Database::default_tx_mode(Self) -> TxMode
 pub fn Database::open(String) -> Self raise TursoError
@@ -151,13 +153,23 @@ pub(open) trait FromRow {
   fn from_row(Row) -> Self raise TursoError
 }
 pub impl FromRow for Bool
+pub impl FromRow for Byte
+pub impl FromRow for Char
 pub impl FromRow for Int
+pub impl FromRow for Int16
 pub impl FromRow for Int64
+pub impl FromRow for UInt
+pub impl FromRow for UInt16
+pub impl FromRow for UInt64
+pub impl FromRow for Float
 pub impl FromRow for Double
 pub impl FromRow for String
 pub impl[T : FromValue] FromRow for T?
 pub impl FromRow for Bytes
+pub impl[T : @json.FromJson] FromRow for Array[T]
 pub impl FromRow for Json
+pub impl[V : @json.FromJson] FromRow for Map[String, V]
+pub impl[T : FromValue] FromRow for @ref.Ref[T]
 pub impl[A : FromValue, B : FromValue] FromRow for (A, B)
 pub impl[A : FromValue, B : FromValue, C : FromValue] FromRow for (A, B, C)
 pub impl[A : FromValue, B : FromValue, C : FromValue, D : FromValue] FromRow for (A, B, C, D)
@@ -167,13 +179,23 @@ pub(open) trait FromValue {
   fn from_value(@value.Value) -> Self raise ValueError
 }
 pub impl FromValue for Bool
+pub impl FromValue for Byte
+pub impl FromValue for Char
 pub impl FromValue for Int
+pub impl FromValue for Int16
 pub impl FromValue for Int64
+pub impl FromValue for UInt
+pub impl FromValue for UInt16
+pub impl FromValue for UInt64
+pub impl FromValue for Float
 pub impl FromValue for Double
 pub impl FromValue for String
 pub impl[T : FromValue] FromValue for T?
 pub impl FromValue for Bytes
+pub impl[T : @json.FromJson] FromValue for Array[T]
 pub impl FromValue for Json
+pub impl[V : @json.FromJson] FromValue for Map[String, V]
+pub impl[T : FromValue] FromValue for @ref.Ref[T]
 
 pub(open) trait QueryExecutor {
   async fn query(Self, String, params? : Array[&ToValue]) -> &Rows raise TursoError
@@ -187,21 +209,32 @@ pub(open) trait Rows {
   async fn has_next(Self) -> Bool raise TursoError
   fn get_row(Self) -> Row raise TursoError
   fn columns(Self) -> Array[@value.Column]
-  async fn close(Self) -> Unit raise TursoError
+  fn close(Self) -> Unit
 }
 
 pub(open) trait ToValue {
   fn to_value(Self) -> @value.Value
 }
+pub impl ToValue for Unit
 pub impl ToValue for Bool
+pub impl ToValue for Byte
+pub impl ToValue for Char
 pub impl ToValue for Int
+pub impl ToValue for Int16
 pub impl ToValue for Int64
+pub impl ToValue for UInt
+pub impl ToValue for UInt16
+pub impl ToValue for UInt64
+pub impl ToValue for Float
 pub impl ToValue for Double
 pub impl ToValue for String
 pub impl[T : ToValue] ToValue for T?
 pub impl ToValue for Bytes
 pub impl ToValue for @value.Value
+pub impl[T : ToJson] ToValue for Array[T]
 pub impl ToValue for Json
+pub impl[V : ToJson] ToValue for Map[String, V]
+pub impl[T : ToValue] ToValue for @ref.Ref[T]
 
 pub(open) trait Tx : QueryExecutor {
   async fn commit(Self) -> Unit raise TursoError

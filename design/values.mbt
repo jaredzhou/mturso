@@ -37,6 +37,37 @@ declare pub impl[T : ToValue] ToValue for T?
 declare pub impl ToValue for Json
 
 // ---------------------------------------------------------------------------
+// 更宽的整数族 / 浮点 / 字符 / Unit / Ref（实现见根包 values.mbt）
+// ---------------------------------------------------------------------------
+
+///|
+declare pub impl ToValue for Byte
+
+///|
+declare pub impl ToValue for Int16
+
+///|
+declare pub impl ToValue for UInt
+
+///|
+declare pub impl ToValue for UInt16
+
+///|
+declare pub impl ToValue for UInt64
+
+///|
+declare pub impl ToValue for Float
+
+///|
+declare pub impl ToValue for Char
+
+///|
+declare pub impl ToValue for Unit
+
+///|
+declare pub impl[T : ToValue] ToValue for Ref[T]
+
+// ---------------------------------------------------------------------------
 // FromValue：从一列里解出值
 // ---------------------------------------------------------------------------
 
@@ -140,3 +171,84 @@ declare pub impl FromValue for Timestamp
 
 ///|
 declare pub impl FromRow for Timestamp
+
+// ---------------------------------------------------------------------------
+// 更宽的整数族 / 浮点 / 字符 / Unit / Ref：FromValue 侧
+// ---------------------------------------------------------------------------
+
+///|
+declare pub impl FromValue for Byte
+
+///|
+declare pub impl FromValue for Int16
+
+///|
+declare pub impl FromValue for UInt
+
+///|
+declare pub impl FromValue for UInt16
+
+///|
+declare pub impl FromValue for UInt64
+
+///|
+declare pub impl FromValue for Float
+
+///|
+declare pub impl FromValue for Char
+
+///|
+declare pub impl[T : FromValue] FromValue for Ref[T]
+
+// ---------------------------------------------------------------------------
+// 更宽的整数族 / 浮点 / 字符 / Ref：FromRow 侧
+// ---------------------------------------------------------------------------
+
+///|
+declare pub impl FromRow for Byte
+
+///|
+declare pub impl FromRow for Int16
+
+///|
+declare pub impl FromRow for UInt
+
+///|
+declare pub impl FromRow for UInt16
+
+///|
+declare pub impl FromRow for UInt64
+
+///|
+declare pub impl FromRow for Float
+
+///|
+declare pub impl FromRow for Char
+
+///|
+declare pub impl[T : FromValue] FromRow for Ref[T]
+
+// ---------------------------------------------------------------------------
+// JSON 族：`Array` / `Map` —— 一律落成 **JSON 文本**（`Value::Text`）。
+//
+// JSONB（BLOB）在绑定层做不了（字节格式是引擎内部的，见 core/json/jsonb.rs），
+// 只能在 SQL 里 `jsonb(?1)` / `json(col)` 让引擎转。
+// ---------------------------------------------------------------------------
+
+///|
+declare pub impl[T : @json.ToJson] ToValue for Array[T]
+
+///|
+declare pub impl[V : @json.ToJson] ToValue for Map[String, V]
+
+///|
+declare pub impl[T : @json.FromJson] FromValue for Array[T]
+
+///|
+declare pub impl[V : @json.FromJson] FromValue for Map[String, V]
+
+///|
+declare pub impl[T : @json.FromJson] FromRow for Array[T]
+
+///|
+declare pub impl[V : @json.FromJson] FromRow for Map[String, V]
