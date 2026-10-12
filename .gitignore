@@ -1,5 +1,6 @@
 # MoonBit 构建产物
 _build/
+node_modules/
 target/
 .mooncakes/
 
