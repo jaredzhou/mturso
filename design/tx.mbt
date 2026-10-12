@@ -58,10 +58,10 @@ pub(open) trait TxBeginner {
 ///   `min(base * 2^n, max)`，实际等待在 `[0, 上限]` 里随机取）。
 /// - `budget_ms`：总时间预算，超了就放弃（`None` 表示只按次数算）。
 pub(all) struct RetryOptions {
-  attempts : Int32
-  base_delay_ms : Int32
-  max_delay_ms : Int32
-  budget_ms : Int32?
+  attempts : Int
+  base_delay_ms : Int
+  max_delay_ms : Int
+  budget_ms : Int?
 } derive(Eq, Debug)
 
 ///|

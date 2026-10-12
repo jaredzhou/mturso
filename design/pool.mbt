@@ -13,25 +13,25 @@
 /// moonpg 里的 `health_check` / `max_lifetime_sec` / `maintenance_interval_sec`
 /// 这一版不做（Turso 侧没有 `status()` 这种廉价的健康检查，也不需要后台维护循环）。
 pub(all) struct PoolConfig {
-  max_conns : Int32
-  min_idle : Int32
-  max_idle_sec : Int32
+  max_conns : Int
+  min_idle : Int
+  max_idle_sec : Int
 } derive(Eq, Debug)
 
 ///|
 /// 建配置（全部有默认值）。
 declare pub fn PoolConfig::new(
-  max_conns? : Int32,
-  min_idle? : Int32,
-  max_idle_sec? : Int32,
+  max_conns? : Int,
+  min_idle? : Int,
+  max_idle_sec? : Int,
 ) -> PoolConfig
 
 ///|
 /// 池的观测数据。
 pub(all) struct PoolStats {
-  total_connections : Int32
-  idle_connections : Int32
-  active_connections : Int32
+  total_connections : Int
+  idle_connections : Int
+  active_connections : Int
   acquire_count : Int64
   acquire_wait_count : Int64
   acquire_wait_duration_ms : Int64
@@ -64,10 +64,10 @@ declare pub fn PoolConn::release(self : PoolConn) -> Unit
 declare pub fn Pool::stats(self : Pool) -> PoolStats
 
 ///|
-declare pub fn Pool::total(self : Pool) -> Int32
+declare pub fn Pool::total(self : Pool) -> Int
 
 ///|
-declare pub fn Pool::idle(self : Pool) -> Int32
+declare pub fn Pool::idle(self : Pool) -> Int
 
 ///|
 /// 关闭池：回收池里**所有**连接的 C 侧工作线程；不会关掉 `db`。
