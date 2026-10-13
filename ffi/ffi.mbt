@@ -40,10 +40,10 @@ pub extern "c" fn conn_exec(conn : Conn, sql : Bytes) -> Int64 = "mturso_conn_ex
 pub extern "c" fn conn_query(conn : Conn, sql : Bytes) -> Bytes = "mturso_conn_query"
 
 ///|
-/// 同步执行查询，返回**类型化二进制**行集（布局见 `stub.c` 的 `do_query_rows`）；
-/// 失败返回空 `Bytes`。
+/// 流式行集：C 侧新建一条 pipe，worker 往写端推帧；返回**读端 fd**
+/// （**所有权转移**给调用方，只能接管一次；-1 = 失败）。
 #borrow(conn, sql)
-pub extern "c" fn conn_query_rows(conn : Conn, sql : Bytes) -> Bytes = "mturso_conn_query_rows"
+pub extern "c" fn submit_rows(conn : Conn, sql : Bytes) -> Int = "mturso_submit_rows"
 
 ///|
 /// 显式关闭连接（幂等）。

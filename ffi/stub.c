@@ -19,6 +19,7 @@
 //   3. 同一个语句不要混用 step / execute（这里统一用 step）。
 #include <errno.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <moonbit.h>
 #include <pthread.h>
 #include <stdint.h>
@@ -74,6 +75,8 @@ static void ensure_setup(void) {
   if (g_setup_state != 0) {
     return;
   }
+  // 流式结果里，读端先关会让 worker 的 write 拿到 EPIPE —— 那是取消，不该杀进程
+  signal(SIGPIPE, SIG_IGN);
   turso_config_t cfg = {0};
   const char *err = NULL;
   if (turso_setup(&cfg, &err) != TURSO_OK) {
@@ -304,38 +307,80 @@ static void put_bytes(strbuf_t *sb, const char *p, int64_t n) {
   }
 }
 
-// 执行查询并把结果打成类型化二进制；失败返回 NULL 并写 errbuf / out_kind
-static char *do_query_rows(turso_connection_t *conn, const char *sql, int32_t *out_len,
-                           char *errbuf, size_t errlen, int *out_kind) {
+// ---------------------------------------------------------------------------
+// 流式结果。一帧 = u8 tag + u32 len + payload[len]：
+//   0 END     无 payload
+//   1 HEADER  u32 n_cols，然后 n x (u32 name_len + name + u32 decltype_len + decltype)
+//   2 ROW     n_cols x (u8 kind + payload)，kind 0=null 1=i64 2=f64 3=text 4=blob
+//   3 ERR     UTF-8 消息
+// C 只把引擎给的值推出来；语义和解释在 MoonBit 侧。
+// ---------------------------------------------------------------------------
+
+enum { FRAME_END = 0, FRAME_HEADER = 1, FRAME_ROW = 2, FRAME_ERR = 3 };
+
+// 写全；返回 -1 = 读端关了（即取消）
+static int write_all(int fd, const char *p, size_t n) {
+  while (n > 0) {
+    ssize_t w = write(fd, p, n);
+    if (w <= 0) {
+      return -1;
+    }
+    p += w;
+    n -= (size_t)w;
+  }
+  return 0;
+}
+
+static void frame_begin(strbuf_t *sb, uint8_t tag) {
+  sb->len = 0;
+  put_u8(sb, tag);
+  put_u32(sb, 0);
+}
+
+// 回填长度并把整帧一次写出去
+static int flush_frame(int fd, strbuf_t *sb) {
+  uint32_t len = (uint32_t)(sb->len - 5);
+  memcpy(sb->buf + 1, &len, 4);
+  return write_all(fd, sb->buf, sb->len);
+}
+
+static void send_err_frame(int fd, strbuf_t *sb, const char *msg, int kind) {
+  const char *m = (msg != NULL) ? msg : "unknown error";
+  frame_begin(sb, FRAME_ERR);
+  put_u8(sb, (uint8_t)kind);
+  sb_put(sb, m, strlen(m));
+  (void)flush_frame(fd, sb);
+}
+
+// 跑完这条语句，把结果按帧推进 fd。写失败就停（读端关掉 = 取消）。
+static void stream_query_rows(turso_connection_t *conn, const char *sql, int fd) {
   const char *err = NULL;
   turso_statement_t *stmt = NULL;
+  strbuf_t sb = {0};
   turso_status_code_t pst = turso_connection_prepare_single(conn, sql, &stmt, &err);
   if (pst != TURSO_OK) {
-    if (out_kind != NULL) {
-      *out_kind = kind_from_status(pst);
-    }
-    set_errbuf(errbuf, errlen, err);
-    return NULL;
+    send_err_frame(fd, &sb, err, kind_from_status(pst));
+    free(sb.buf);
+    return;
   }
 
   int64_t n_cols = turso_statement_column_count(stmt);
-  strbuf_t sb = {0};
+  frame_begin(&sb, FRAME_HEADER);
   put_u32(&sb, (uint32_t)n_cols);
-  put_u32(&sb, 0); // n_rows：最后回填
-
   for (int64_t i = 0; i < n_cols; i++) {
     put_str(&sb, turso_statement_column_name(stmt, (size_t)i));
     put_str(&sb, turso_statement_column_decltype(stmt, (size_t)i));
   }
+  if (flush_frame(fd, &sb) != 0) {
+    goto done;
+  }
 
-  uint32_t n_rows = 0;
-  int failed = 0;
   for (;;) {
     turso_status_code_t st = turso_statement_step(stmt, &err);
     if (st == TURSO_IO) {
       if (turso_statement_run_io(stmt, &err) != TURSO_OK) {
-        failed = 1;
-        break;
+        send_err_frame(fd, &sb, err, MTURSO_ERR_QUERY);
+        goto done;
       }
       continue;
     }
@@ -343,12 +388,10 @@ static char *do_query_rows(turso_connection_t *conn, const char *sql, int32_t *o
       break;
     }
     if (st != TURSO_ROW) {
-      if (out_kind != NULL) {
-        *out_kind = kind_from_status(st);
-      }
-      failed = 1;
-      break;
+      send_err_frame(fd, &sb, err, kind_from_status(st));
+      goto done;
     }
+    frame_begin(&sb, FRAME_ROW);
     for (int64_t i = 0; i < n_cols; i++) {
       switch (turso_statement_row_value_kind(stmt, (size_t)i)) {
         case TURSO_TYPE_INTEGER:
@@ -374,23 +417,19 @@ static char *do_query_rows(turso_connection_t *conn, const char *sql, int32_t *o
           break;
       }
     }
-    n_rows++;
+    if (flush_frame(fd, &sb) != 0) {
+      goto done;
+    }
   }
 
+  frame_begin(&sb, FRAME_END);
+  (void)flush_frame(fd, &sb);
+
+done:
   turso_statement_deinit(stmt);
-  if (failed) {
-    if (sb.buf != NULL) free(sb.buf);
-    set_errbuf(errbuf, errlen, err);
-    return NULL;
-  }
-  uint32_t rows_le = n_rows;
-  memcpy(sb.buf + 4, &rows_le, 4);
-  if (sb.buf == NULL) {
-    sb.buf = (char *)calloc(1, 1);
-  }
-  *out_len = (int32_t)sb.len;
-  return sb.buf;
+  free(sb.buf);
 }
+
 
 // ---------------------------------------------------------------------------
 // 测试辅助：注册标量函数 `turso_sleep(ms)` —— 在**执行该语句的线程**上睡 ms 毫秒。
@@ -487,7 +526,8 @@ typedef struct {
   int has_job;
   int shutdown;
   int job_is_query;
-  int job_typed;       // 1 = 结果是类型化二进制（do_query_rows），0 = 旧的 TSV
+  int job_stream;      // 1 = 结果按帧推进 stream_fd；0 = 旧路径（门铃 1 字节 + take_*）
+  int stream_fd;       // -1 = 无
   char *job_sql;       // C 堆（从 MoonBit 拷贝），worker 负责 free
   int job_done;
   char *result;        // worker 写的查询结果（C 堆）
@@ -515,10 +555,30 @@ static void *conn_worker(void *arg) {
     }
     char *sql = h->job_sql;
     int is_query = h->job_is_query;
-    int typed = h->job_typed;
+    int stream = h->job_stream;
+    int sfd = h->stream_fd;
     h->job_sql = NULL;
     h->has_job = 0;
     pthread_mutex_unlock(&h->mu);
+
+    // 流式：把结果按帧推进 pipe。帧本身才是信号，所以不敲 1 字节门铃。
+    if (stream) {
+      if (h->conn == NULL) {
+        strbuf_t se = {0};
+        send_err_frame(sfd, &se, "connection is not open", MTURSO_ERR_CONNECTION);
+        free(se.buf);
+      } else {
+        stream_query_rows(h->conn, sql, sfd);
+      }
+      close(sfd);
+      free(sql);
+      pthread_mutex_lock(&h->mu);
+      h->stream_fd = -1;
+      h->failed = 0;
+      h->job_done = 1;
+      pthread_mutex_unlock(&h->mu);
+      continue;
+    }
 
     // 阻塞执行 —— 只发生在工作线程上
     char errbuf[1024] = {0};
@@ -532,8 +592,7 @@ static void *conn_worker(void *arg) {
       failed = 1;
       kind = MTURSO_ERR_CONNECTION;
     } else if (is_query) {
-      result = typed ? do_query_rows(h->conn, sql, &result_len, errbuf, sizeof(errbuf), &kind)
-                     : do_query(h->conn, sql, &result_len, errbuf, sizeof(errbuf), &kind);
+      result = do_query(h->conn, sql, &result_len, errbuf, sizeof(errbuf), &kind);
       failed = (result == NULL);
     } else {
       changes = do_exec(h->conn, sql, errbuf, sizeof(errbuf), &kind);
@@ -574,6 +633,7 @@ static void conn_finalize(void *self) {
   if (h->result != NULL) free(h->result);
   if (h->bell_w >= 0) close(h->bell_w);
   if (h->bell_r >= 0) close(h->bell_r); // 若已交给 MoonBit 则是 -1
+  if (h->stream_fd >= 0) close(h->stream_fd);
   if (h->conn != NULL) {
     turso_connection_deinit(h->conn);
     h->conn = NULL;
@@ -590,6 +650,7 @@ mturso_conn_t *mturso_db_connect(mturso_db_t *db) {
   memset(h, 0, sizeof(mturso_conn_t));
   h->bell_r = -1;
   h->bell_w = -1;
+  h->stream_fd = -1;
   pthread_mutex_init(&h->mu, NULL);
   pthread_cond_init(&h->cv, NULL);
 
@@ -673,7 +734,7 @@ moonbit_bytes_t mturso_conn_query(mturso_conn_t *conn, moonbit_bytes_t sql) {
 
 // ---- 异步路径（提交给本连接的工作线程；完成后敲门铃） ----
 
-static void submit_job(mturso_conn_t *conn, moonbit_bytes_t sql, int is_query, int typed) {
+static void submit_job(mturso_conn_t *conn, moonbit_bytes_t sql, int is_query, int stream_fd) {
   if (conn == NULL || conn->conn == NULL) {
     set_err("connection is not open");
     return;
@@ -697,7 +758,8 @@ static void submit_job(mturso_conn_t *conn, moonbit_bytes_t sql, int is_query, i
   }
   conn->job_sql = copy;
   conn->job_is_query = is_query;
-  conn->job_typed = typed;
+  conn->job_stream = (stream_fd >= 0) ? 1 : 0;
+  conn->stream_fd = stream_fd;
   conn->job_done = 0;
   conn->failed = 0;
   conn->err[0] = '\0';
@@ -709,42 +771,35 @@ static void submit_job(mturso_conn_t *conn, moonbit_bytes_t sql, int is_query, i
 MOONBIT_FFI_EXPORT
 void mturso_submit_query(mturso_conn_t *conn, moonbit_bytes_t sql) {
   clear_err();
-  submit_job(conn, sql, 1, 0);
+  submit_job(conn, sql, 1, -1);
 }
 
 MOONBIT_FFI_EXPORT
 void mturso_submit_exec(mturso_conn_t *conn, moonbit_bytes_t sql) {
   clear_err();
-  submit_job(conn, sql, 0, 0);
+  submit_job(conn, sql, 0, -1);
 }
 
-// 异步：类型化行集（结果是二进制缓冲，见 do_query_rows）
+// 异步：流式行集。新建一条 pipe，worker 往写端推帧，返回读端（所有权给 MoonBit；-1 = 失败）。
 MOONBIT_FFI_EXPORT
-void mturso_submit_query_rows(mturso_conn_t *conn, moonbit_bytes_t sql) {
-  clear_err();
-  submit_job(conn, sql, 1, 1);
-}
-
-// 同步：类型化行集
-MOONBIT_FFI_EXPORT
-moonbit_bytes_t mturso_conn_query_rows(mturso_conn_t *conn, moonbit_bytes_t sql) {
+int32_t mturso_submit_rows(mturso_conn_t *conn, moonbit_bytes_t sql) {
   clear_err();
   if (conn == NULL || conn->conn == NULL) {
     set_err("connection is not open");
-    return bytes_empty();
+    return -1;
   }
-  char errbuf[1024] = {0};
-  int32_t len = 0;
-  int kind = MTURSO_ERR_NONE;
-  char *result =
-      do_query_rows(conn->conn, (const char *)sql, &len, errbuf, sizeof(errbuf), &kind);
-  if (result == NULL) {
-    set_err_kind(errbuf, kind);
-    return bytes_empty();
+  int fds[2];
+  if (pipe(fds) != 0) {
+    set_err("failed to create result pipe");
+    return -1;
   }
-  moonbit_bytes_t out = bytes_dup(result, len);
-  free(result);
-  return out;
+  submit_job(conn, sql, 1, fds[1]);
+  if (g_err[0] != '\0') {
+    close(fds[0]);
+    close(fds[1]);
+    return -1;
+  }
+  return (int32_t)fds[0];
 }
 
 // 把门铃读端交给 MoonBit（RawFdStream 接管所有权）。只能拿一次。
