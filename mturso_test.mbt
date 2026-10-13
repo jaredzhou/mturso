@@ -82,6 +82,35 @@ async test "query error raises TursoError::QueryError" {
 }
 
 ///|
+async test "类型化行集：整数/浮点/文本/blob/null 按类型取到，不再是 TSV 文本" {
+  let db = @mturso.Database::open(":memory:")
+  let conn = db.connect()
+  ignore(conn.exec_blocking("create table t(i integer, r real, s text, b blob, n integer)"))
+  ignore(conn.exec_blocking("insert into t values (42, 1.5, 'hi', x'0102', null)"))
+  let rows = conn.query_rows("select i, r, s, b, n from t")
+  defer rows.close()
+  let cols = rows.columns()
+  assert_true(cols.length() == 5)
+  assert_true(cols[0].name == "i")
+  assert_true(cols[0].decltype.length() > 0)
+  assert_true(rows.has_next())
+  let row = rows.get_row()
+  let i : Int = row.get(0)
+  assert_true(i == 42)
+  let r : Double = row.get(1)
+  assert_true(r == 1.5)
+  let s : String = row.get(2)
+  assert_true(s == "hi")
+  let b : Bytes = row.get(3)
+  assert_true(b == b"\x01\x02")
+  // NULL 不再被渲染成字符串 "NULL"
+  assert_true(row.value(4) == @mturso.Value::Null)
+  assert_true(!rows.has_next())
+  conn.close()
+  db.close()
+}
+
+///|
 test "用已关闭的连接 → TursoError::ConnectionError" {
   let db = @mturso.Database::open(":memory:")
   let conn = db.connect()

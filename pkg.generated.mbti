@@ -36,6 +36,7 @@ pub async fn Connection::exec(Self, String) -> Int64 raise TursoError
 pub fn Connection::exec_blocking(Self, String) -> Int64 raise TursoError
 pub async fn Connection::query(Self, String) -> String raise TursoError
 pub fn Connection::query_blocking(Self, String) -> String raise TursoError
+pub fn Connection::query_rows(Self, String) -> &Rows raise TursoError
 
 pub struct Database {
   raw : @ffi.Db
@@ -43,6 +44,14 @@ pub struct Database {
 pub fn Database::close(Self) -> Unit
 pub fn Database::connect(Self) -> Connection raise TursoError
 pub fn Database::open(String) -> Self raise TursoError
+
+pub struct ResultSet {
+  columns : Array[@value.Column]
+  rows : Array[Array[@value.Value]]
+  cursor : @ref.Ref[Int]
+  closed : @ref.Ref[Bool]
+}
+pub impl Rows for ResultSet
 
 pub struct Row {
   values : Array[@value.Value]
@@ -113,6 +122,13 @@ pub impl[T : @json.FromJson] FromValue for Array[T]
 pub impl FromValue for Json
 pub impl[V : @json.FromJson] FromValue for Map[String, V]
 pub impl[T : FromValue] FromValue for @ref.Ref[T]
+
+pub(open) trait Rows {
+  async fn has_next(Self) -> Bool raise TursoError
+  fn get_row(Self) -> Row raise TursoError
+  fn columns(Self) -> Array[@value.Column]
+  fn close(Self) -> Unit
+}
 
 pub(open) trait ToValue {
   fn to_value(Self) -> @value.Value

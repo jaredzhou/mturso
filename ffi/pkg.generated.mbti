@@ -10,6 +10,8 @@ pub fn conn_exec(Conn, Bytes) -> Int64
 
 pub fn conn_query(Conn, Bytes) -> Bytes
 
+pub fn conn_query_rows(Conn, Bytes) -> Bytes
+
 pub fn db_close(Db) -> Unit
 
 pub fn db_connect(Db) -> Conn
