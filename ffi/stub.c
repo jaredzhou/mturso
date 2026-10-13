@@ -36,11 +36,39 @@
 static int g_setup_state = 0; // 0 = 未初始化, 1 = 成功, -1 = 失败
 static char g_err[2048];
 
-static void set_err(const char *msg) {
-  snprintf(g_err, sizeof(g_err), "%s", msg != NULL ? msg : "unknown error");
+// 错误分类：消息仍是文本，分类给 MoonBit 侧做模式匹配（Busy / Conflict 是可重试信号）。
+enum {
+  MTURSO_ERR_NONE = 0,
+  MTURSO_ERR_QUERY = 1,
+  MTURSO_ERR_BUSY = 2,
+  MTURSO_ERR_CONFLICT = 3,
+  MTURSO_ERR_CONNECTION = 4,
+};
+
+static int g_kind = MTURSO_ERR_NONE;
+
+static int kind_from_status(turso_status_code_t st) {
+  switch (st) {
+    case TURSO_BUSY:
+      return MTURSO_ERR_BUSY;
+    case TURSO_BUSY_SNAPSHOT:
+      return MTURSO_ERR_CONFLICT;
+    default:
+      return MTURSO_ERR_QUERY;
+  }
 }
 
-static void clear_err(void) { g_err[0] = '\0'; }
+static void set_err_kind(const char *msg, int kind) {
+  snprintf(g_err, sizeof(g_err), "%s", msg != NULL ? msg : "unknown error");
+  g_kind = kind;
+}
+
+static void set_err(const char *msg) { set_err_kind(msg, MTURSO_ERR_CONNECTION); }
+
+static void clear_err(void) {
+  g_err[0] = '\0';
+  g_kind = MTURSO_ERR_NONE;
+}
 
 static void ensure_setup(void) {
   if (g_setup_state != 0) {
@@ -101,7 +129,7 @@ static void set_errbuf(char *buf, size_t len, const char *msg) {
 // ---------------------------------------------------------------------------
 
 // 用 step 把语句跑到 TURSO_DONE（不混用 execute）
-static int step_to_done(turso_statement_t *stmt, const char **err) {
+static int step_to_done(turso_statement_t *stmt, const char **err, int *out_kind) {
   for (;;) {
     turso_status_code_t st = turso_statement_step(stmt, err);
     if (st == TURSO_ROW) {
@@ -116,19 +144,27 @@ static int step_to_done(turso_statement_t *stmt, const char **err) {
     if (st == TURSO_DONE) {
       return 0;
     }
+    if (out_kind != NULL) {
+      *out_kind = kind_from_status(st);
+    }
     return -1;
   }
 }
 
 // 执行非查询语句；成功返回受影响行数，失败返回 -1 并写 errbuf
-static int64_t do_exec(turso_connection_t *conn, const char *sql, char *errbuf, size_t errlen) {
+static int64_t do_exec(turso_connection_t *conn, const char *sql, char *errbuf, size_t errlen,
+                       int *out_kind) {
   const char *err = NULL;
   turso_statement_t *stmt = NULL;
-  if (turso_connection_prepare_single(conn, sql, &stmt, &err) != TURSO_OK) {
+  turso_status_code_t pst = turso_connection_prepare_single(conn, sql, &stmt, &err);
+  if (pst != TURSO_OK) {
+    if (out_kind != NULL) {
+      *out_kind = kind_from_status(pst);
+    }
     set_errbuf(errbuf, errlen, err);
     return -1;
   }
-  int rc = step_to_done(stmt, &err);
+  int rc = step_to_done(stmt, &err, out_kind);
   int64_t changes = turso_statement_n_change(stmt);
   turso_statement_deinit(stmt);
   if (rc != 0) {
@@ -140,10 +176,14 @@ static int64_t do_exec(turso_connection_t *conn, const char *sql, char *errbuf, 
 
 // 执行查询，结果渲染成制表符/换行分隔的文本（malloc 出来，调用方 free）
 static char *do_query(turso_connection_t *conn, const char *sql, int32_t *out_len, char *errbuf,
-                      size_t errlen) {
+                      size_t errlen, int *out_kind) {
   const char *err = NULL;
   turso_statement_t *stmt = NULL;
-  if (turso_connection_prepare_single(conn, sql, &stmt, &err) != TURSO_OK) {
+  turso_status_code_t pst = turso_connection_prepare_single(conn, sql, &stmt, &err);
+  if (pst != TURSO_OK) {
+    if (out_kind != NULL) {
+      *out_kind = kind_from_status(pst);
+    }
     set_errbuf(errbuf, errlen, err);
     return NULL;
   }
@@ -165,6 +205,9 @@ static char *do_query(turso_connection_t *conn, const char *sql, int32_t *out_le
       break;
     }
     if (st != TURSO_ROW) {
+      if (out_kind != NULL) {
+        *out_kind = kind_from_status(st);
+      }
       failed = 1;
       break;
     }
@@ -329,6 +372,7 @@ typedef struct {
   int32_t result_len;
   int64_t changes;     // exec 的受影响行数
   int failed;
+  int kind;            // 上一条 job 的错误分类（见 MTURSO_ERR_*）
   char err[1024];      // 每连接错误：worker 写、MoonBit 线程读
 
   // 门铃：worker 写 1 字节，MoonBit 侧把 bell_r 包成 RawFdStream
@@ -359,14 +403,16 @@ static void *conn_worker(void *arg) {
     int32_t result_len = 0;
     int64_t changes = 0;
     int failed = 0;
+    int kind = MTURSO_ERR_NONE;
     if (h->conn == NULL) {
       set_errbuf(errbuf, sizeof(errbuf), "connection is not open");
       failed = 1;
+      kind = MTURSO_ERR_CONNECTION;
     } else if (is_query) {
-      result = do_query(h->conn, sql, &result_len, errbuf, sizeof(errbuf));
+      result = do_query(h->conn, sql, &result_len, errbuf, sizeof(errbuf), &kind);
       failed = (result == NULL);
     } else {
-      changes = do_exec(h->conn, sql, errbuf, sizeof(errbuf));
+      changes = do_exec(h->conn, sql, errbuf, sizeof(errbuf), &kind);
       failed = (changes < 0);
     }
     free(sql);
@@ -376,6 +422,7 @@ static void *conn_worker(void *arg) {
     h->result_len = result_len;
     h->changes = changes;
     h->failed = failed;
+    h->kind = kind;
     snprintf(h->err, sizeof(h->err), "%s", errbuf);
     h->job_done = 1;
     pthread_mutex_unlock(&h->mu);
@@ -471,9 +518,10 @@ int64_t mturso_conn_exec(mturso_conn_t *conn, moonbit_bytes_t sql) {
     return -1;
   }
   char errbuf[1024] = {0};
-  int64_t changes = do_exec(conn->conn, (const char *)sql, errbuf, sizeof(errbuf));
+  int kind = MTURSO_ERR_NONE;
+  int64_t changes = do_exec(conn->conn, (const char *)sql, errbuf, sizeof(errbuf), &kind);
   if (changes < 0) {
-    set_err(errbuf);
+    set_err_kind(errbuf, kind);
   }
   return changes;
 }
@@ -487,9 +535,11 @@ moonbit_bytes_t mturso_conn_query(mturso_conn_t *conn, moonbit_bytes_t sql) {
   }
   char errbuf[1024] = {0};
   int32_t len = 0;
-  char *result = do_query(conn->conn, (const char *)sql, &len, errbuf, sizeof(errbuf));
+  int kind = MTURSO_ERR_NONE;
+  char *result =
+      do_query(conn->conn, (const char *)sql, &len, errbuf, sizeof(errbuf), &kind);
   if (result == NULL) {
-    set_err(errbuf);
+    set_err_kind(errbuf, kind);
     return bytes_empty();
   }
   moonbit_bytes_t out = bytes_dup(result, len);
@@ -576,7 +626,7 @@ moonbit_bytes_t mturso_take_query(mturso_conn_t *conn) {
 
   if (failed) {
     if (result != NULL) free(result);
-    set_err(errbuf);
+    set_err_kind(errbuf, conn->kind);
     return bytes_empty();
   }
   moonbit_bytes_t out = bytes_dup(result != NULL ? result : "", len);
@@ -601,7 +651,7 @@ int64_t mturso_take_exec(mturso_conn_t *conn) {
   pthread_mutex_unlock(&conn->mu);
 
   if (failed) {
-    set_err(errbuf);
+    set_err_kind(errbuf, conn->kind);
     return -1;
   }
   clear_err();
@@ -612,3 +662,7 @@ MOONBIT_FFI_EXPORT
 moonbit_bytes_t mturso_last_error(void) {
   return bytes_dup(g_err, (int32_t)strlen(g_err));
 }
+
+// 上一条错误的分类（0 = 无错误；见 MTURSO_ERR_*）。
+MOONBIT_FFI_EXPORT
+int32_t mturso_last_error_kind(void) { return (int32_t)g_kind; }

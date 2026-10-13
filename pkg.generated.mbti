@@ -14,8 +14,12 @@ import {
 
 // Errors
 pub suberror TursoError {
-  TursoError(String)
-}
+  ConnectionError(String)
+  QueryError(String)
+  NoRows
+  Busy(String)
+  Conflict(String)
+} derive(@debug.Debug)
 
 pub(all) suberror ValueError {
   ValueError(String)

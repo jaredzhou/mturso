@@ -17,8 +17,9 @@ supported_targets = "+native"
 // 79 = implicit_impl_as_method：derive(Eq, Debug) 在这个 core 版本上的既有告警。
 //  9 = struct_never_constructed：`Row` 的字段是私有的，只有查询结果会构造它 ——
 //      那部分（Rows）是 ticket #3，落地时把 9 从这里去掉。
+//  6 = unused_constructor：`NoRows` 由 query_one / fetch_one 抛 —— 同样是 ticket #3。
 
-warnings = "-79-9"
+warnings = "-79-9-6"
 
 options(
   // 最终链接发生在根包（test / 可执行产物），所以链接参数要挂在这里。

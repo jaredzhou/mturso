@@ -32,11 +32,22 @@ pub struct Connection {
 }
 
 ///|
-/// 读取 FFI 侧的错误槽：非空就抛。
+/// 读取 FFI 侧的错误槽：非空就抛（按 C 侧给的分类分型）。
 fn check_error() -> Unit raise TursoError {
   let msg = @utf8.decode_lossy(@ffi.last_error())
   if msg != "" {
-    raise TursoError(msg)
+    raise kind_to_error(@ffi.last_error_kind(), msg)
+  }
+}
+
+///|
+/// C 侧的分类 → `TursoError` 构造器（0 = 无错误，不进这里）。
+fn kind_to_error(kind : Int, msg : String) -> TursoError {
+  match kind {
+    2 => TursoError::Busy(msg)
+    3 => TursoError::Conflict(msg)
+    4 => TursoError::ConnectionError(msg)
+    _ => TursoError::QueryError(msg)
   }
 }
 
@@ -89,7 +100,7 @@ async fn Connection::bell_stream(
       let fd = @ffi.conn_bell_fd(self.raw)
       check_error()
       let stream = @raw_fd.RawFdStream(fd) catch {
-        _ => raise TursoError("failed to create doorbell stream")
+        _ => raise TursoError::ConnectionError("failed to create doorbell stream")
       }
       self.bell.val = Some(stream)
       stream
@@ -101,7 +112,7 @@ async fn Connection::bell_stream(
 /// 等待工作线程敲门铃（`read_exactly` 抛的是通用 `Error`，这里转成 `TursoError`）。
 async fn await_bell(bell : @raw_fd.RawFdStream) -> Unit raise TursoError {
   ignore(bell.read_exactly(1)) catch {
-    _ => raise TursoError("doorbell read failed")
+    _ => raise TursoError::ConnectionError("doorbell read failed")
   }
 }
 

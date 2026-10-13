@@ -25,7 +25,7 @@ pub struct Row {
 pub fn[T : FromValue] Row::get(self : Row, index : Int) -> T raise TursoError {
   let v = self.values[index]
   T::from_value(v) catch {
-    ValueError::ValueError(m) => raise TursoError("from_value error: \{m}")
+    ValueError::ValueError(m) => raise TursoError::QueryError("from_value error: \{m}")
   }
 }
 

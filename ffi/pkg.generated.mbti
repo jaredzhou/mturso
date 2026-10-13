@@ -18,6 +18,8 @@ pub fn db_open(Bytes) -> Db
 
 pub fn last_error() -> Bytes
 
+pub fn last_error_kind() -> Int
+
 pub fn submit_exec(Conn, Bytes) -> Unit
 
 pub fn submit_query(Conn, Bytes) -> Unit

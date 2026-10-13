@@ -48,6 +48,11 @@ pub extern "c" fn conn_close(conn : Conn) = "mturso_conn_close"
 /// 最近一次错误信息（无错误时为空串）。
 pub extern "c" fn last_error() -> Bytes = "mturso_last_error"
 
+///|
+/// 最近一次错误的**分类**（0 = 无错误；1 = Query，2 = Busy，3 = Conflict，
+/// 4 = Connection）。消息仍是文本，分类给上层做模式匹配。
+pub extern "c" fn last_error_kind() -> Int = "mturso_last_error_kind"
+
 // ---------------------------------------------------------------------------
 // 异步路径：提交给本连接的工作线程，完成后敲「门铃」pipe
 // ---------------------------------------------------------------------------

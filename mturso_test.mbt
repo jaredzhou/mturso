@@ -63,20 +63,40 @@ async test "transaction commit and rollback" {
 }
 
 ///|
-async test "query error raises TursoError" {
+async test "query error raises TursoError::QueryError" {
   let db = @mturso.Database::open(":memory:")
   let conn = db.connect()
   let mut raised = false
   try conn.query("select * from no_such_table") |> ignore catch {
-    @mturso.TursoError(msg) => {
+    @mturso.TursoError::QueryError(msg) => {
       assert_true(msg.length() > 0)
       raised = true
     }
+    _ => ()
   } noraise {
     _ => ()
   }
   assert_true(raised)
   conn.close()
+  db.close()
+}
+
+///|
+test "用已关闭的连接 → TursoError::ConnectionError" {
+  let db = @mturso.Database::open(":memory:")
+  let conn = db.connect()
+  conn.close()
+  let mut got = false
+  try ignore(conn.query_blocking("select 1")) catch {
+    @mturso.TursoError::ConnectionError(msg) => {
+      assert_true(msg.length() > 0)
+      got = true
+    }
+    _ => ()
+  } noraise {
+    _ => ()
+  }
+  assert_true(got)
   db.close()
 }
 
