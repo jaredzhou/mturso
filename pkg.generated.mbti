@@ -49,7 +49,9 @@ pub fn[T : FromValue] Row::get(Self, Int) -> T raise TursoError
 pub fn Row::len(Self) -> Int
 pub fn Row::value(Self, Int) -> @value.Value
 
-pub(all) struct Timestamp(Int64) derive(Eq, @debug.Debug)
+pub(all) struct Timestamp(String) derive(Eq, @debug.Debug)
+pub fn Timestamp::from_unix(Int64) -> Self
+pub fn Timestamp::unix(Self) -> Int64 raise ValueError
 pub impl FromRow for Timestamp
 pub impl FromValue for Timestamp
 pub impl ToValue for Timestamp

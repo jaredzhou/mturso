@@ -18,7 +18,8 @@ test "往返：内建类型 ToValue -> FromValue" {
   assert_true(ToValue::to_value((None : Int?)) == @value.Value::Null)
   assert_true(ToValue::to_value(Some(3)) == @value.Value::Integer(3L))
   assert_true(
-    ToValue::to_value(Timestamp(1000000L)) == @value.Value::Integer(1000000L),
+    ToValue::to_value(Timestamp("2026-10-13T00:00:00Z")) ==
+    @value.Value::Text("2026-10-13T00:00:00Z"),
   )
 
   let b : Bool = FromValue::from_value(@value.Value::Integer(1L))
@@ -35,8 +36,8 @@ test "往返：内建类型 ToValue -> FromValue" {
   assert_true(by == b"\x01\x02")
   let n : Int? = FromValue::from_value(@value.Value::Null)
   assert_true(n is None)
-  let ts : Timestamp = FromValue::from_value(@value.Value::Integer(1000000L))
-  assert_true(ts == Timestamp(1000000L))
+  let ts : Timestamp = FromValue::from_value(@value.Value::Text("2026-10-13T00:00:00Z"))
+  assert_true(ts == Timestamp("2026-10-13T00:00:00Z"))
 }
 
 ///|
@@ -51,9 +52,28 @@ test "类型不符时抛 ValueError（不是 panic、不是静默错值）" {
 }
 
 ///|
-test "Timestamp 约定：整数微秒；Integer / Real 都能解" {
-  let ts : Timestamp = FromValue::from_value(@value.Value::Real(2.0))
-  assert_true(ts == Timestamp(2L))
+test "Timestamp：ISO 8601 文本；unix() / from_unix() 给秒" {
+  assert_true(Timestamp::from_unix(0L) == Timestamp("1970-01-01T00:00:00Z"))
+  assert_true(Timestamp("1970-01-01T00:00:00Z").unix() == 0L)
+  assert_true(Timestamp::from_unix(1700000000L) == Timestamp("2023-11-14T22:13:20Z"))
+  assert_true(Timestamp("2023-11-14T22:13:20Z").unix() == 1700000000L)
+  // 闰年
+  assert_true(Timestamp::from_unix(951782400L) == Timestamp("2000-02-29T00:00:00Z"))
+  assert_true(Timestamp("2000-02-29T00:00:00Z").unix() == 951782400L)
+  // 1970 以前（负数）
+  assert_true(Timestamp::from_unix(-86400L) == Timestamp("1969-12-31T00:00:00Z"))
+  assert_true(Timestamp("1969-12-31T00:00:00Z").unix() == -86400L)
+  // 容忍空格分隔、小数与结尾 Z
+  assert_true(Timestamp("2023-11-14 22:13:20").unix() == 1700000000L)
+  assert_true(Timestamp("2023-11-14T22:13:20.500Z").unix() == 1700000000L)
+  // 不支持的写法（带时区偏移）要报错
+  let mut got = false
+  try ignore(Timestamp("2023-11-14T22:13:20+08:00").unix()) catch {
+    ValueError::ValueError(_) => got = true
+  } noraise {
+    _ => ()
+  }
+  assert_true(got)
 }
 
 ///|

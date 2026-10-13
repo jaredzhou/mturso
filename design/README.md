@@ -81,6 +81,24 @@ moon check --target native
 另外两个小结论：`&T` 里的 `T` 必须是 trait（`&Connection` 编译不过）；
 `ExecResult` 之类不能被隐式丢弃，用法里要 `ignore(...)`。
 
+## Turso 声明类型 ↔ 存储类（别混）
+
+值只有 5 个存储类（`Value` 的五态）；**列的声明类型**是另一层，只影响 affinity /
+STRICT 校验 / 编码，不改变值的存储类。`Column.decltype` 拿到的是**声明文本**
+（字符串），不是值的类型。内建 custom type 会改变线上编码，几条值得一提的是：
+
+| 声明类型 | 存储类 |
+| --- | --- |
+| `date` / `time` / **`timestamp`** | TEXT（ISO 8601）—— 所以 `Timestamp` 就是文本 |
+| `json` | TEXT |
+| `jsonb` | BLOB |
+| `uuid` / `bytea` / `numeric(P,S)` | BLOB |
+| `boolean` / `smallint` | INTEGER（`Bool` ↔ `Integer` 正好对上） |
+
+composite（`STRUCT` / `UNION`）与数组类型（`INTEGER[]`）是 Turso 扩展、实验特性
+（`--experimental-custom-types` 背后），而且 inline 的 `STRUCT(...)` 列类型不被接受
+（得先 `CREATE TYPE` 定义具名类型）；本版不做显式支持。
+
 ## 实现顺序（已定）
 
 1. `value/` 子包（`Value` / `Column` / `ToValue` / `FromValue`）——纯 MoonBit，不碰 C。

@@ -158,10 +158,21 @@ declare pub impl[
 // ---------------------------------------------------------------------------
 
 ///|
-/// 微秒级 UNIX 时间戳。存成 `Value::Integer`，读回时 `Integer` / `Real` 都能解。
+/// ISO 8601 时间戳（UTC），例如 `"2026-10-13T00:00:00Z"`。
 ///
-/// 「类型即约定」：Turso 没有 timestamp 类型，约定用整数微秒表示。
-pub(all) struct Timestamp(Int64) derive(Eq, Debug)
+/// 与 Turso 内建的 `timestamp` custom type 对齐 —— 那个类型的 base 是 **TEXT**
+/// （ISO 8601），不是整数（见 docs.turso.tech/sql-reference/data-types）。
+/// 要数值走 `unix()`（秒）/ `Timestamp::from_unix()`。
+pub(all) struct Timestamp(String) derive(Eq, Debug)
+
+///|
+/// 从 UNIX 秒（UTC）构造，格式化成 `YYYY-MM-DDTHH:MM:SSZ`。
+declare pub fn Timestamp::from_unix(secs : Int64) -> Timestamp
+
+///|
+/// 取 UNIX 秒（UTC）。接受 `YYYY-MM-DD[T ]HH:MM:SS`，后面可跟 `Z` 或 `.小数`；
+/// 别的形式（比如带时区偏移）抛 `ValueError`。
+declare pub fn Timestamp::unix(self : Timestamp) -> Int64 raise ValueError
 
 ///|
 declare pub impl ToValue for Timestamp

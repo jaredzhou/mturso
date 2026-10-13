@@ -3,10 +3,107 @@
 // 与 moonpg 的差别：Turso 没有 OID，所以「编码」就是直接构造 `Value`。
 
 ///|
-/// 微秒级 UNIX 时间戳。存成 `Value::Integer`，读回时 `Integer` / `Real` 都能解。
+/// ISO 8601 时间戳（UTC），例如 `"2026-10-13T00:00:00Z"`。
 ///
-/// 「类型即约定」：Turso 没有 timestamp 类型，约定用整数微秒表示。
-pub(all) struct Timestamp(Int64) derive(Eq, Debug)
+/// 与 Turso 内建的 `timestamp` custom type 对齐：那个类型的 base 是 **TEXT**
+/// （ISO 8601），不是整数（见 docs.turso.tech/sql-reference/data-types）。
+/// 要数值就走 `unix()`（秒）/ `Timestamp::from_unix()`。
+pub(all) struct Timestamp(String) derive(Eq, Debug)
+
+// ---------------------------------------------------------------------------
+// ISO 8601 ↔ UNIX 秒（UTC）。用 Howard Hinnant 的 civil↔days 算法。
+// ---------------------------------------------------------------------------
+
+///|
+fn days_from_civil(y : Int, m : Int, d : Int) -> Int {
+  let yy = if m <= 2 { y - 1 } else { y }
+  let era = (if yy >= 0 { yy } else { yy - 399 }) / 400
+  let yoe = yy - era * 400
+  let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1
+  let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+  era * 146097 + doe - 719468
+}
+
+///|
+fn civil_from_days(z : Int) -> (Int, Int, Int) {
+  let zz = z + 719468
+  let era = (if zz >= 0 { zz } else { zz - 146096 }) / 146097
+  let doe = zz - era * 146097
+  let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+  let y = yoe + era * 400
+  let doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+  let mp = (5 * doy + 2) / 153
+  let d = doy - (153 * mp + 2) / 5 + 1
+  let m = if mp < 10 { mp + 3 } else { mp - 9 }
+  (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
+///|
+fn zero_pad(v : Int, width : Int) -> String {
+  let s = v.to_string()
+  let mut out = ""
+  for _ in 0..<(width - s.length()) {
+    out = out + "0"
+  }
+  out + s
+}
+
+///|
+fn parse_digits(s : String, start : Int, len : Int) -> Int raise ValueError {
+  let mut v = 0
+  for i in 0..<len {
+    let c = s[start + i].to_int()
+    if c < 48 || c > 57 {
+      raise ValueError::ValueError("bad digit in timestamp: \{s}")
+    }
+    v = v * 10 + (c - 48)
+  }
+  v
+}
+
+///|
+/// 从 UNIX 秒（UTC）构造，格式化成 `YYYY-MM-DDTHH:MM:SSZ`。
+pub fn Timestamp::from_unix(secs : Int64) -> Timestamp {
+  let days = secs / 86400L
+  let rem = secs % 86400L
+  let d = if rem < 0L { days - 1L } else { days }
+  let sod = if rem < 0L { rem + 86400L } else { rem }
+  let (y, m, day) = civil_from_days(d.to_int())
+  let hh = (sod / 3600L).to_int()
+  let mi = ((sod % 3600L) / 60L).to_int()
+  let ss = (sod % 60L).to_int()
+  let ymd = "\{zero_pad(y, 4)}-\{zero_pad(m, 2)}-\{zero_pad(day, 2)}"
+  let hms = "\{zero_pad(hh, 2)}:\{zero_pad(mi, 2)}:\{zero_pad(ss, 2)}"
+  Timestamp("\{ymd}T\{hms}Z")
+}
+
+///|
+/// 取 UNIX 秒（UTC）。接受 `YYYY-MM-DD[T ]HH:MM:SS`，后面可跟 `Z` 或 `.小数`；
+/// 别的形式（比如带时区偏移 `+08:00`）抛 `ValueError`。
+pub fn Timestamp::unix(self : Timestamp) -> Int64 raise ValueError {
+  let s = self.0
+  let n = s.length()
+  let suffix_ok = n == 19 || (n > 19 && (s[19] == 'Z' || s[19] == '.'))
+  if n < 19 ||
+    !suffix_ok ||
+    s[4] != '-' ||
+    s[7] != '-' ||
+    (s[10] != 'T' && s[10] != ' ') ||
+    s[13] != ':' ||
+    s[16] != ':' {
+    raise ValueError::ValueError(
+      "expected ISO 8601 'YYYY-MM-DDTHH:MM:SS[Z]', got: \{s}",
+    )
+  }
+  let y = parse_digits(s, 0, 4)
+  let mo = parse_digits(s, 5, 2)
+  let d = parse_digits(s, 8, 2)
+  let hh = parse_digits(s, 11, 2)
+  let mi = parse_digits(s, 14, 2)
+  let ss = parse_digits(s, 17, 2)
+  let days = days_from_civil(y, mo, d)
+  days.to_int64() * 86400L + hh.to_int64() * 3600L + mi.to_int64() * 60L + ss.to_int64()
+}
 
 // ---------------------------------------------------------------------------
 // ToValue：SQL 参数
@@ -59,7 +156,7 @@ pub impl[T : ToValue] ToValue for T? with fn to_value(self) {
 
 ///|
 pub impl ToValue for Timestamp with fn to_value(self) {
-  @value.Value::Integer(self.0)
+  @value.Value::Text(self.0)
 }
 
 ///|
@@ -131,12 +228,11 @@ pub impl[T : FromValue] FromValue for T? with fn from_value(v : @value.Value) {
 }
 
 ///|
-/// `Integer` / `Real` 都能解。
+/// 只认 `Value::Text`（ISO 8601），与 Turso 内建 `timestamp` 的 base 一致。
 pub impl FromValue for Timestamp with fn from_value(v : @value.Value) {
   match v {
-    @value.Value::Integer(i) => Timestamp(i)
-    @value.Value::Real(f) => Timestamp(f.to_int64())
-    _ => raise ValueError::ValueError("expected Value::Integer for Timestamp")
+    @value.Value::Text(s) => Timestamp(s)
+    _ => raise ValueError::ValueError("expected Value::Text (ISO 8601) for Timestamp")
   }
 }
 
