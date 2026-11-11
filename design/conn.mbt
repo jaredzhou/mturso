@@ -74,7 +74,7 @@ declare pub async fn Connection::execute(
 declare pub async fn Connection::begin_tx(
   self : Connection,
   opts? : TxOptions,
-) -> &Tx raise TursoError
+) -> DbTx raise TursoError
 
 ///|
 declare pub fn Connection::close(self : Connection) -> Unit

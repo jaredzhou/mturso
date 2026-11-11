@@ -1,20 +1,8 @@
 // 设计稿：事务 + 重试助手（Turso 特有的 BEGIN 变体都在这里体现）。
 
 ///|
-/// `BEGIN` 的模式。
-///
-/// 前三个与 SQLite 一一对应：
-///
-/// - `Deferred`：默认，事务真正开始拿锁推迟到第一条读写语句。
-/// - `Immediate`：立刻拿写锁（WAL 下即「预留写」），拿不到就 `Busy`。
-/// - `Exclusive`：立刻拿排他锁。
-///
-/// `Concurrent` 是 **Turso 扩展**（`BEGIN CONCURRENT`，只在 MVCC 下有意义）：
-/// 多个写事务可以同时进行，提交时做乐观冲突检测，冲突方拿 `Conflict`
-/// （C 侧 `TURSO_BUSY_SNAPSHOT`，事务已被中止，必须整事务重试）。
-///
-/// 注意：非 MVCC 下用它**直接报错**（`Concurrent transaction mode is only
-/// supported when MVCC is enabled`），**不是**静默退化成普通 `BEGIN`。
+/// `BEGIN` 的模式。前三个与 SQLite 一一对应；`Concurrent` 是 Turso 的
+/// `BEGIN CONCURRENT`（只在 MVCC 下有意义；非 MVCC 下会**硬报错**）。
 pub(all) enum TxMode {
   Deferred
   Immediate
@@ -23,46 +11,73 @@ pub(all) enum TxMode {
 } derive(Eq, Debug)
 
 ///|
-/// `begin_tx` 的选项。
-///
-/// `mode = None` 表示**用库级默认**（`Database::default_tx_mode()`；库刚打开时是
-/// `Deferred`，`set_journal_mode(Mvcc)` 会把它设成 `Concurrent`，见 `conn.mbt`）。
-///
-/// 这里**不是** moonpg 的 `isolation_level`：SQLite/Turso 只控制「何时拿锁」，
-/// 不提供隔离级别选择。
+/// `begin_tx` 的选项。`mode = None` 表示用库级默认
+/// （`Database::default_tx_mode()`，见 conn.mbt）。
 pub(all) struct TxOptions {
   mode : TxMode?
   read_only : Bool?
 } derive(Eq, Debug)
 
 ///|
-/// 默认选项：`mode = Deferred`、非只读。
 declare pub fn TxOptions::default() -> TxOptions
 
 ///|
-/// 进行中的事务。继承 `QueryExecutor`，所以在事务里 query/execute 的写法和
-/// 在连接上完全一样。
-pub(open) trait Tx: QueryExecutor {
+/// 进行中的事务：只管 commit / rollback，**不**继承 `QueryExecutor`。
+/// 具体事务类型（`DbTx`）同时实现 `QueryExecutor` 和 `Tx`，两个能力正交。
+pub(open) trait Tx {
   async fn commit(Self) -> Unit raise TursoError
   async fn rollback(Self) -> Unit raise TursoError
 }
 
 ///|
-/// 能开事务的东西：`Connection` / `Pool` / `PoolConn`。
+/// 具体事务。参考 moonpg：连接版与池版**合并成同一个具体类型**，所以
+/// `begin_tx` 对所有实现者都返回 `DbTx` —— `&TxBeginner` 仍然可用，同时
+/// `tx.execute(...)` / `tx.commit()` 都是普通 dot 调用。
+///
+/// 池版将来在结构里带一个可选的 `pool_conn`，commit/rollback 时顺便还连接。
+declare pub type DbTx
+
+///|
+declare pub async fn DbTx::query(
+  self : DbTx,
+  sql : String,
+  params? : Array[&ToValue],
+) -> &Rows raise TursoError
+
+///|
+declare pub async fn DbTx::query_one(
+  self : DbTx,
+  sql : String,
+  params? : Array[&ToValue],
+) -> Row raise TursoError
+
+///|
+declare pub async fn DbTx::execute(
+  self : DbTx,
+  sql : String,
+  params? : Array[&ToValue],
+) -> ExecResult raise TursoError
+
+///|
+declare pub async fn DbTx::commit(self : DbTx) -> Unit raise TursoError
+
+///|
+declare pub async fn DbTx::rollback(self : DbTx) -> Unit raise TursoError
+
+///|
+declare pub impl QueryExecutor for DbTx
+
+///|
+declare pub impl Tx for DbTx
+
+///|
+/// 能开事务的东西：`Connection` / `Database`（池）。两者都返回同一个 `DbTx`。
 pub(open) trait TxBeginner {
-  async fn begin_tx(Self, opts? : TxOptions) -> &Tx raise TursoError
+  async fn begin_tx(Self, opts? : TxOptions) -> DbTx raise TursoError
 }
 
 ///|
 /// 重试预算（full-jitter 指数退避）。
-///
-/// 默认值来自实测：两个连接抢 MVCC 写时，不退避平均 ~94 次尝试才成功，
-/// 带 jitter 只要 ~2.6 次。
-///
-/// - `attempts`：尝试次数上限。
-/// - `base_delay_ms` / `max_delay_ms`：退避区间（第 n 次的上限是
-///   `min(base * 2^n, max)`，实际等待在 `[0, 上限]` 里随机取）。
-/// - `budget_ms`：总时间预算，超了就放弃（`None` 表示只按次数算）。
 pub(all) struct RetryOptions {
   attempts : Int
   base_delay_ms : Int
@@ -78,23 +93,16 @@ declare pub fn RetryOptions::default() -> RetryOptions
 /// 把原错误重新抛出。
 declare pub async fn[T, B : TxBeginner] begin_func(
   beginner : B,
-  f : async (&Tx) -> T,
+  f : async (DbTx) -> T raise TursoError,
 ) -> T raise TursoError
 
 ///|
-/// `begin_func` + 重试。重试单位是**整个事务**（`begin → f(tx) → commit`），
-/// 用在**拿到 `&Tx` 之后**执行的场景：事务一旦因冲突/忙被中止就不能续跑，
-/// 只能 rollback 后重开。
-///
-/// 重试的是「可重试」那一档错误（`Busy` | `Conflict`）—— 不按键值区分，撞到哪个
-/// 取决于连接的运行模式（见 `errors.mbt`）。
+/// `begin_func` + 重试。重试单位是**整个事务**；重试的是「可重试」那一档
+/// （`Busy` | `Conflict`），撞到哪个取决于连接的运行模式。
 ///
 /// 没有语句级重试助手：读不需要重试（直接 `conn.query()`），写要能重试就显式走事务。
-///
-/// 注意语义：`f` 会被**执行多次**，所以事务里做的事必须可重复执行
-/// （必要时用唯一键/版本号保护，别把「已经发出去的副作用」放在里面）。
 declare pub async fn[T, B : TxBeginner] retry_tx(
   beginner : B,
-  f : async (&Tx) -> T,
+  f : async (DbTx) -> T raise TursoError,
   opts? : RetryOptions,
 ) -> T raise TursoError

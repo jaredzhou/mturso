@@ -77,7 +77,7 @@ async fn usage_tx(
 
   // 事务级：整个事务（begin → body → commit）重跑
   ignore(
-    retry_tx(conn, async fn(tx) {
+    retry_tx(conn, async fn(tx) -> Int raise TursoError {
       ignore(
         tx.execute("update accounts set balance = balance + 1 where id = 1"),
       )
@@ -91,7 +91,7 @@ async fn usage_tx(
 
   // 池上也能开事务（TxBeginner），或者用 begin_func 自动 commit/rollback
   ignore(
-    begin_func(pool, async fn(tx) {
+    begin_func(pool, async fn(tx) -> Int raise TursoError {
       ignore(tx.execute("insert into logs(msg) values ('pool')"))
       0
     }),
