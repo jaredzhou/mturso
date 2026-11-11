@@ -241,7 +241,7 @@ async fn demo(conn : @mturso.Connection) -> Unit raise @mturso.TursoError {
 
 ## Known limitations
 
-- **Single-statement `execute`** — `query` rejects multi-statement SQL explicitly; the multi-statement `execute` loop is not enabled yet (it currently trips an engine abort).
+- **Multi-statement `execute` (DML)** — `query` rejects multi-statement SQL; `execute` runs multiple DML statements in order. A script that mixes DDL and a later write in one call can trip an engine bug (a `btree` panic), so run DDL as its own `execute`.
 - **No cancellation or timeouts** — once submitted, a statement runs to completion (Turso's C ABI has no cross-thread cancel).
 - **Native target today** — the binding links a C shared library; Windows and wasm are planned.
 - **Preview engine** — Turso 0.8.2 is a preview release with many features behind experimental flags; don't treat it as production SQLite.

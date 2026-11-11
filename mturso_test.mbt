@@ -349,6 +349,17 @@ async test "事务：commit / rollback / begin_func / 重复 commit" {
 }
 
 ///|
+async test "execute 支持多语句：逐条执行、累计影响行数" {
+  let db = @mturso.Database::open(":memory:")
+  defer db.close()
+  ignore(db.execute("create table t(x integer)"))
+  let ev = db.execute("insert into t values (1); insert into t values (2), (3)")
+  assert_true(ev.affected_rows() == 3)
+  let n : Int64 = db.query_one("select count(*) from t").get(0)
+  assert_true(n == 3L)
+}
+
+///|
 async test "UTF-16 String ↔ UTF-8 TEXT：中文/emoji 往返" {
   let db = @mturso.Database::open(":memory:")
   defer db.close()

@@ -27,12 +27,39 @@ pub impl QueryExecutor for Connection with execute(
   sql : String,
   params? : Array[&ToValue],
 ) -> ExecResult raise TursoError {
-  let rows = self.open_rows(sql, params?)
-  defer rows.close()
-  while rows.has_next() {
-    ignore(rows.get_row())
+  let data = @utf8.encode(sql)
+  let mut start = 0
+  let mut total = 0L
+  for ;; {
+    while start < data.length() {
+      let c = data[start].to_int()
+      if c == 59 || c == 32 || c == 10 || c == 13 || c == 9 {
+        start = start + 1
+      } else {
+        break
+      }
+    }
+    if start >= data.length() {
+      break
+    }
+    let rest = data[start:].to_owned()
+    let probe = @ffi.conn_prepare_first(self.raw, rest)
+    check_error()
+    let tail = @ffi.stmt_tail(probe).to_int()
+    @ffi.stmt_deinit(probe)
+    if tail <= 0 {
+      break
+    }
+    let piece = @utf8.decode_lossy(data[start : start + tail].to_owned())
+    let rows = self.open_rows(piece, params?)
+    while rows.has_next() {
+      ignore(rows.get_row())
+    }
+    rows.close()
+    total = total + rows.changes.val
+    start = start + tail
   }
-  { changes: rows.changes.val, }
+  { changes: total, }
 }
 
 ///|
