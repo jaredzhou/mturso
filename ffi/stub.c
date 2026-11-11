@@ -15,14 +15,19 @@
 //   3. 同一个语句不要混用 step / execute（这里统一用 step）。
 #include <errno.h>
 #include <fcntl.h>
-#include <signal.h>
+#include <dlfcn.h>
 #include <moonbit.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#endif
 
 #include "turso.h"
 
@@ -67,12 +72,280 @@ static void clear_err(void) {
   g_kind = MTURSO_ERR_NONE;
 }
 
+// ---------------------------------------------------------------------------
+// 运行期加载 Turso 动态库（#9）：不写任何 cc-link-flags。
+//
+// 默认搜索顺序：<mturso 源码>/libs/ → <exe 目录>/libs/ → ./libs/ → 系统默认。
+// 设置 $MTURSO_LIB_PATH 时只加载该文件（显式覆盖）。
+// ---------------------------------------------------------------------------
+
+#if defined(__APPLE__)
+#define MTURSO_LIB_FILE "libturso_sync_sdk_kit.dylib"
+#elif defined(_WIN32)
+#define MTURSO_LIB_FILE "turso_sync_sdk_kit.dll"
+#else
+#define MTURSO_LIB_FILE "libturso_sync_sdk_kit.so"
+#endif
+
+typedef struct {
+  turso_status_code_t (*turso_setup)(const turso_config_t *, const char **);
+  turso_status_code_t (*turso_database_new)(const turso_database_config_t *,
+                                            const turso_database_t **, const char **);
+  turso_status_code_t (*turso_database_open)(const turso_database_t *, const char **);
+  turso_status_code_t (*turso_database_connect)(const turso_database_t *,
+                                                turso_connection_t **, const char **);
+  void (*turso_database_deinit)(const turso_database_t *);
+  void (*turso_connection_deinit)(const turso_connection_t *);
+  int64_t (*turso_connection_last_insert_rowid)(const turso_connection_t *);
+  turso_status_code_t (*turso_connection_prepare_single)(
+      const turso_connection_t *, const char *, turso_statement_t **, const char **);
+  turso_status_code_t (*turso_connection_prepare_first)(
+      const turso_connection_t *, const char *, turso_statement_t **, size_t *,
+      const char **);
+  turso_status_code_t (*turso_connection_register_scalar_function)(
+      const turso_connection_t *, const char *, int32_t, bool, uintptr_t,
+      turso_scalar_function_t, turso_context_destructor_t,
+      turso_value_destructor_t, const char **);
+  turso_status_code_t (*turso_statement_bind_positional_null)(
+      const turso_statement_t *, size_t);
+  turso_status_code_t (*turso_statement_bind_positional_int)(
+      const turso_statement_t *, size_t, int64_t);
+  turso_status_code_t (*turso_statement_bind_positional_double)(
+      const turso_statement_t *, size_t, double);
+  turso_status_code_t (*turso_statement_bind_positional_text)(
+      const turso_statement_t *, size_t, const char *, size_t);
+  turso_status_code_t (*turso_statement_bind_positional_blob)(
+      const turso_statement_t *, size_t, const char *, size_t);
+  int64_t (*turso_statement_column_count)(const turso_statement_t *);
+  const char *(*turso_statement_column_name)(const turso_statement_t *, size_t);
+  const char *(*turso_statement_column_decltype)(const turso_statement_t *, size_t);
+  int64_t (*turso_statement_n_change)(const turso_statement_t *);
+  turso_type_t (*turso_statement_row_value_kind)(const turso_statement_t *, size_t);
+  int64_t (*turso_statement_row_value_int)(const turso_statement_t *, size_t);
+  double (*turso_statement_row_value_double)(const turso_statement_t *, size_t);
+  const char *(*turso_statement_row_value_bytes_ptr)(const turso_statement_t *,
+                                                     size_t);
+  int64_t (*turso_statement_row_value_bytes_count)(const turso_statement_t *,
+                                                   size_t);
+  turso_status_code_t (*turso_statement_step)(const turso_statement_t *,
+                                              const char **);
+  turso_status_code_t (*turso_statement_run_io)(const turso_statement_t *,
+                                                const char **);
+  void (*turso_statement_deinit)(const turso_statement_t *);
+} turso_api_t;
+
+static turso_api_t g_api;
+static void *g_lib = NULL;
+static char g_load_reason[1024];
+
+static int try_load(const char *path) {
+  dlerror();
+  void *h = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+  if (h == NULL) {
+    const char *why = dlerror();
+    snprintf(g_load_reason, sizeof(g_load_reason), "%s",
+             why != NULL ? why : "unknown dlopen error");
+    return -1;
+  }
+#define RESOLVE(f)                                                              \
+  do {                                                                          \
+    dlerror();                                                                  \
+    *(void **)(&g_api.f) = dlsym(h, #f);                                        \
+    if (g_api.f == NULL) {                                                      \
+      const char *why = dlerror();                                              \
+      snprintf(g_load_reason, sizeof(g_load_reason), "missing symbol %s: %s",   \
+               #f, why != NULL ? why : "unknown dlsym error");                  \
+      dlclose(h);                                                               \
+      return -1;                                                                \
+    }                                                                           \
+  } while (0)
+  RESOLVE(turso_setup);
+  RESOLVE(turso_database_new);
+  RESOLVE(turso_database_open);
+  RESOLVE(turso_database_connect);
+  RESOLVE(turso_database_deinit);
+  RESOLVE(turso_connection_deinit);
+  RESOLVE(turso_connection_last_insert_rowid);
+  RESOLVE(turso_connection_prepare_single);
+  RESOLVE(turso_connection_prepare_first);
+  RESOLVE(turso_connection_register_scalar_function);
+  RESOLVE(turso_statement_bind_positional_null);
+  RESOLVE(turso_statement_bind_positional_int);
+  RESOLVE(turso_statement_bind_positional_double);
+  RESOLVE(turso_statement_bind_positional_text);
+  RESOLVE(turso_statement_bind_positional_blob);
+  RESOLVE(turso_statement_column_count);
+  RESOLVE(turso_statement_column_name);
+  RESOLVE(turso_statement_column_decltype);
+  RESOLVE(turso_statement_n_change);
+  RESOLVE(turso_statement_row_value_kind);
+  RESOLVE(turso_statement_row_value_int);
+  RESOLVE(turso_statement_row_value_double);
+  RESOLVE(turso_statement_row_value_bytes_ptr);
+  RESOLVE(turso_statement_row_value_bytes_count);
+  RESOLVE(turso_statement_step);
+  RESOLVE(turso_statement_run_io);
+  RESOLVE(turso_statement_deinit);
+#undef RESOLVE
+  g_lib = h;
+  g_load_reason[0] = '\0';
+  return 0;
+}
+
+static const char *source_lib_path(char *buf, size_t len) {
+  snprintf(buf, len, "%s", __FILE__);
+  char *slash = strrchr(buf, '/');
+  if (slash == NULL) {
+    return NULL;
+  }
+  *slash = '\0'; // .../ffi
+  slash = strrchr(buf, '/');
+  if (slash == NULL) {
+    snprintf(buf, len, ".");
+  } else {
+    *slash = '\0'; // .../<mturso>
+  }
+  size_t used = strlen(buf);
+  if (used + sizeof("/libs/" MTURSO_LIB_FILE) > len) {
+    return NULL;
+  }
+  snprintf(buf + used, len - used, "/libs/%s", MTURSO_LIB_FILE);
+  return buf;
+}
+
+static int executable_path(char *buf, size_t len) {
+#if defined(__APPLE__)
+  uint32_t size = (uint32_t)len;
+  if (_NSGetExecutablePath(buf, &size) != 0) {
+    return -1;
+  }
+  char resolved[4096];
+  if (realpath(buf, resolved) != NULL) {
+    snprintf(buf, len, "%s", resolved);
+  }
+  return 0;
+#elif defined(__linux__)
+  ssize_t n = readlink("/proc/self/exe", buf, len - 1);
+  if (n <= 0 || (size_t)n >= len) {
+    return -1;
+  }
+  buf[n] = '\0';
+  return 0;
+#else
+  (void)buf;
+  (void)len;
+  return -1;
+#endif
+}
+
+static const char *exe_lib_path(char *buf, size_t len) {
+  if (executable_path(buf, len) != 0) {
+    return NULL;
+  }
+  char *slash = strrchr(buf, '/');
+  if (slash == NULL) {
+    return NULL;
+  }
+  *slash = '\0';
+  snprintf(slash, (size_t)(len - (slash - buf)), "/libs/%s", MTURSO_LIB_FILE);
+  return buf;
+}
+
+static int load_turso(void) {
+  if (g_lib != NULL) {
+    return 0;
+  }
+  char source_path[4096];
+  char exe_path[4096];
+  const char *env = getenv("MTURSO_LIB_PATH");
+  if (env != NULL && env[0] != '\0') {
+    if (try_load(env) == 0) {
+      return 0;
+    }
+    char detail[sizeof(g_load_reason)];
+    snprintf(detail, sizeof(detail), "%s", g_load_reason);
+    char msg[2048];
+    snprintf(msg, sizeof(msg),
+             "cannot load $MTURSO_LIB_PATH=%s: %s", env, detail);
+    set_err(msg);
+    return -1;
+  }
+
+  const char *cands[4];
+  size_t n = 0;
+  const char *source_libs = source_lib_path(source_path, sizeof(source_path));
+  if (source_libs != NULL) {
+    cands[n++] = source_libs;
+  }
+  const char *exe_libs = exe_lib_path(exe_path, sizeof(exe_path));
+  if (exe_libs != NULL) {
+    cands[n++] = exe_libs;
+  }
+  cands[n++] = "./libs/" MTURSO_LIB_FILE;
+  cands[n++] = MTURSO_LIB_FILE;
+  for (size_t i = 0; i < n; i++) {
+    if (try_load(cands[i]) == 0) {
+      return 0;
+    }
+  }
+  char detail[sizeof(g_load_reason)];
+  snprintf(detail, sizeof(detail), "%s", g_load_reason);
+  char msg[2048];
+  snprintf(msg, sizeof(msg),
+           "cannot load " MTURSO_LIB_FILE
+           "; searched <mturso-source>/libs/, <exe>/libs/, ./libs/, and the "
+           "system loader path; last error: %s",
+           detail);
+  set_err(msg);
+  return -1;
+}
+
+#define turso_setup g_api.turso_setup
+#define turso_database_new g_api.turso_database_new
+#define turso_database_open g_api.turso_database_open
+#define turso_database_connect g_api.turso_database_connect
+#define turso_database_deinit g_api.turso_database_deinit
+#define turso_connection_deinit g_api.turso_connection_deinit
+#define turso_connection_last_insert_rowid g_api.turso_connection_last_insert_rowid
+#define turso_connection_prepare_single g_api.turso_connection_prepare_single
+#define turso_connection_prepare_first g_api.turso_connection_prepare_first
+#define turso_connection_register_scalar_function \
+  g_api.turso_connection_register_scalar_function
+#define turso_statement_bind_positional_null \
+  g_api.turso_statement_bind_positional_null
+#define turso_statement_bind_positional_int \
+  g_api.turso_statement_bind_positional_int
+#define turso_statement_bind_positional_double \
+  g_api.turso_statement_bind_positional_double
+#define turso_statement_bind_positional_text \
+  g_api.turso_statement_bind_positional_text
+#define turso_statement_bind_positional_blob \
+  g_api.turso_statement_bind_positional_blob
+#define turso_statement_column_count g_api.turso_statement_column_count
+#define turso_statement_column_name g_api.turso_statement_column_name
+#define turso_statement_column_decltype g_api.turso_statement_column_decltype
+#define turso_statement_n_change g_api.turso_statement_n_change
+#define turso_statement_row_value_kind g_api.turso_statement_row_value_kind
+#define turso_statement_row_value_int g_api.turso_statement_row_value_int
+#define turso_statement_row_value_double g_api.turso_statement_row_value_double
+#define turso_statement_row_value_bytes_ptr \
+  g_api.turso_statement_row_value_bytes_ptr
+#define turso_statement_row_value_bytes_count \
+  g_api.turso_statement_row_value_bytes_count
+#define turso_statement_step g_api.turso_statement_step
+#define turso_statement_run_io g_api.turso_statement_run_io
+#define turso_statement_deinit g_api.turso_statement_deinit
+
 static void ensure_setup(void) {
   if (g_setup_state != 0) {
     return;
   }
   // 流式结果里，读端先关会让 worker 的 write 拿到 EPIPE —— 那是取消，不该杀进程
   signal(SIGPIPE, SIG_IGN);
+  if (load_turso() != 0) {
+    g_setup_state = -1;
+    return;
+  }
   turso_config_t cfg = {0};
   const char *err = NULL;
   if (turso_setup(&cfg, &err) != TURSO_OK) {

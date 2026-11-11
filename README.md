@@ -30,7 +30,7 @@ async fn main {
 - **Retries that understand contention** — `retry_tx` reruns a whole transaction on `Busy` (WAL write lock) or `Conflict` (MVCC write-write), with full-jitter backoff and a bounded budget.
 - **Errors you can match on** — `TursoError` separates connection, query, no-rows, busy, and conflict failures.
 - **Deterministic shutdown** — `close()` joins worker threads, and `db.close()` cascades to every pooled connection.
-- **No separate engine install** — the Turso library ships with the repo.
+- **No separate engine install** — the Turso library ships with the binding and is loaded at runtime; consumers never write linker flags.
 
 ## Platform support
 
@@ -63,24 +63,33 @@ import {
 }
 ```
 
-Your **root package's** `moon.pkg` — import it, and link the Turso shared library into the final artifact:
+Your package's `moon.pkg` only needs the import:
 
 ```moonbit
 import {
   "jaredzhou/mturso",
   "moonbitlang/async",
 }
-
-options(
-  link: {
-    "native": {
-      "cc-link-flags": "-L/path/to/mturso/libs -lturso_sync_sdk_kit -Wl,-rpath,/path/to/mturso/libs",
-    },
-  },
-)
 ```
 
-> MoonBit does not propagate `cc-link-flags` from a dependency to the downstream link, and the link happens in **your** root package. This repo's own `moon.pkg` / `ffi/moon.pkg` already carry the same flags, which is why `moon test` works out of the box.
+There are no link flags, rpaths, or `LD_LIBRARY_PATH` to copy. The C stub loads the
+engine on first use. `MTURSO_LIB_PATH` is an explicit override; when it is unset,
+the lookup order is:
+
+1. the `libs/` directory in the mturso source checkout used to build the binding
+2. `libs/` beside the executable
+3. `./libs/` under the process working directory
+4. the platform's normal dynamic-loader search path
+
+For a deployed binary, either copy the platform library to `<exe-dir>/libs/`, or
+point directly at it:
+
+```bash
+MTURSO_LIB_PATH=/opt/mturso/libturso_sync_sdk_kit.so ./your-app
+```
+
+Use the `.dylib` name on macOS. If `MTURSO_LIB_PATH` is set but the file cannot be
+loaded, opening the database fails with the exact path and loader error.
 
 ## Quickstart
 
@@ -243,12 +252,11 @@ async fn demo(conn : @mturso.Connection) -> Unit raise @mturso.TursoError {
 
 - **Multi-statement `execute` (DML)** — `query` rejects multi-statement SQL; `execute` runs multiple DML statements in order. A script that mixes DDL and a later write in one call can trip an engine bug (a `btree` panic), so run DDL as its own `execute`.
 - **No cancellation or timeouts** — once submitted, a statement runs to completion (Turso's C ABI has no cross-thread cancel).
-- **Native target today** — the binding links a C shared library; Windows and wasm are planned.
+- **Native target today** — the binding loads a C shared library at runtime; Windows and wasm are planned.
 - **Preview engine** — Turso 0.8.2 is a preview release with many features behind experimental flags; don't treat it as production SQLite.
 
 ## Roadmap
 
-- **#9** — load the engine at run time so consumers don't need to copy link flags.
 - **#10** — WebAssembly / edge spike.
 - **#11** — Windows x64 (MSVC).
 
@@ -256,15 +264,18 @@ async fn demo(conn : @mturso.Connection) -> Unit raise @mturso.TursoError {
 
 ```bash
 moon check --target native      # type check
-moon test  --target native      # run the test suite (27 tests)
+moon test  --target native      # run the test suite (28 tests)
 ```
 
 Do not run a bare `moon fmt` over the sources: this toolchain respells `Int` to `Int32`. If you do, revert with `sed -i 's/Int32/Int/g'` on the touched files.
 
-The Turso shared library is vendored in `libs/` (with a `.sha256`), and both `moon.pkg` and `ffi/moon.pkg` point `-L`/rpath at it, so tests need no `LD_LIBRARY_PATH`. On a new machine or after moving the repo:
+The Linux x86_64 Turso shared library is vendored in `libs/` with a `.sha256`.
+It is loaded at runtime, so neither the repo nor a consumer needs `-L`, `-l`,
+an rpath, or `LD_LIBRARY_PATH`. On another platform or architecture, fetch the
+matching library; the script only copies files and does not edit `moon.pkg`:
 
 ```bash
-bash scripts/fetch-turso-lib.sh   # copies the library + rewrites both link paths
+bash scripts/fetch-turso-lib.sh
 ```
 
 Layout:

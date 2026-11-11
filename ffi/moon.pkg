@@ -3,11 +3,6 @@ supported_targets = "+native"
 
 options(
   "native-stub": [ "stub.c" ],
-  // 指向 Turso 的 C 动态库（已复制到仓库内 libs/）。
-  // 换机器/换仓库位置时跑 scripts/fetch-turso-lib.sh 重写此处。
-  link: {
-    "native": {
-      "cc-link-flags": "-L/home/jared/turso/libs -lturso_sync_sdk_kit -Wl,-rpath,/home/jared/turso/libs",
-    },
-  },
+  // Turso 动态库由 stub.c 的 load_turso() 在运行期加载，不需要 link flags。
+  // $MTURSO_LIB_PATH 优先；否则 <mturso>/libs/ → <exe>/libs/ → ./libs/ → 系统路径。
 )

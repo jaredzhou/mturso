@@ -38,6 +38,3 @@ jobs:
         run: |
           moon version --all
           moon update
-
-      - name: Point link flags at this checkout
-        run: bash scripts/fetch-turso-lib.sh --rewrite-only

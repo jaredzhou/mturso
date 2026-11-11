@@ -21,12 +21,4 @@ supported_targets = "+native"
 
 warnings = "-79-6"
 
-options(
-  // 最终链接发生在根包（test / 可执行产物），所以链接参数要挂在这里。
-  // 库已复制到仓库内 libs/；换机器/换仓库位置时跑 scripts/fetch-turso-lib.sh 重写此路径。
-  link: {
-    "native": {
-      "cc-link-flags": "-L/home/jared/turso/libs -lturso_sync_sdk_kit -Wl,-rpath,/home/jared/turso/libs",
-    },
-  },
-)
+// Turso 动态库由 ffi/stub.c 在运行期加载，不需要 link flags。
