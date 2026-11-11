@@ -52,3 +52,32 @@ pub fn Row::columns(self : Row) -> Array[@value.Column] {
 pub(open) trait FromRow {
   fn from_row(Row) -> Self raise TursoError
 }
+
+///|
+/// 能执行 SQL 的东西。
+pub(open) trait QueryExecutor {
+  /// 只能单语句；多语句请用 `execute`。
+  async fn query(Self, String, params? : Array[&ToValue]) -> &Rows raise TursoError
+  /// 取一行；零行时抛 `NoRows`。
+  async fn query_one(Self, String, params? : Array[&ToValue]) -> Row raise TursoError
+  /// 执行（本版单语句），返回受影响行数。
+  async fn execute(Self, String, params? : Array[&ToValue]) -> ExecResult raise TursoError
+}
+
+///|
+/// 能关闭的东西。
+pub(open) trait Closer {
+  fn close(Self) -> Unit
+}
+
+///|
+/// `execute` 的结果。
+pub struct ExecResult {
+  changes : Int64
+}
+
+///|
+/// 受影响行数。
+pub fn ExecResult::affected_rows(self : ExecResult) -> Int {
+  self.changes.to_int()
+}

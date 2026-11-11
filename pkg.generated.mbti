@@ -29,15 +29,15 @@ pub(all) suberror ValueError {
 pub struct Connection {
   db : Database
   raw : @ffi.Conn
-  bell : @ref.Ref[@raw_fd.RawFdStream?]
 }
 pub fn Connection::close(Self) -> Unit
-pub async fn Connection::exec(Self, String) -> Int64 raise TursoError
 pub fn Connection::exec_blocking(Self, String) -> Int64 raise TursoError
 pub fn Connection::exec_params(Self, String, params? : Array[&ToValue]) -> Int64 raise TursoError
-pub async fn Connection::query(Self, String) -> String raise TursoError
-pub fn Connection::query_blocking(Self, String) -> String raise TursoError
-pub async fn Connection::query_rows(Self, String, params? : Array[&ToValue]) -> &Rows raise TursoError
+pub async fn Connection::execute(Self, String, params? : Array[&ToValue]) -> ExecResult raise TursoError
+pub async fn Connection::query(Self, String, params? : Array[&ToValue]) -> &Rows raise TursoError
+pub async fn Connection::query_one(Self, String, params? : Array[&ToValue]) -> Row raise TursoError
+pub impl Closer for Connection
+pub impl QueryExecutor for Connection
 
 pub struct Database {
   raw : @ffi.Db
@@ -46,15 +46,25 @@ pub fn Database::close(Self) -> Unit
 pub fn Database::connect(Self) -> Connection raise TursoError
 pub fn Database::open(String) -> Self raise TursoError
 
+pub struct ExecResult {
+  changes : Int64
+}
+pub fn ExecResult::affected_rows(Self) -> Int
+
 pub struct ResultRows {
   stream : @raw_fd.RawFdStream
   columns : Array[@value.Column]
   stmt : @ffi.Stmt
   conn : @ffi.Conn
   pending : @ref.Ref[Array[@value.Value]?]
+  changes : @ref.Ref[Int64]
   done : @ref.Ref[Bool]
   closed : @ref.Ref[Bool]
 }
+pub fn ResultRows::close(Self) -> Unit
+pub fn ResultRows::columns(Self) -> Array[@value.Column]
+pub fn ResultRows::get_row(Self) -> Row raise TursoError
+pub async fn ResultRows::has_next(Self) -> Bool raise TursoError
 pub impl Rows for ResultRows
 
 pub struct Row {
@@ -62,9 +72,9 @@ pub struct Row {
   columns : Array[@value.Column]
 }
 pub fn Row::columns(Self) -> Array[@value.Column]
-pub fn[T : FromValue] Row::get(Self, Int32) -> T raise TursoError
-pub fn Row::len(Self) -> Int32
-pub fn Row::value(Self, Int32) -> @value.Value
+pub fn[T : FromValue] Row::get(Self, Int) -> T raise TursoError
+pub fn Row::len(Self) -> Int
+pub fn Row::value(Self, Int) -> @value.Value
 
 pub(all) struct Timestamp(String) derive(Eq, @debug.Debug)
 pub fn Timestamp::from_unix(Int64) -> Self
@@ -79,16 +89,20 @@ pub using @value {type Column}
 pub using @value {type Value}
 
 // Traits
+pub(open) trait Closer {
+  fn close(Self) -> Unit
+}
+
 pub(open) trait FromRow {
   fn from_row(Row) -> Self raise TursoError
 }
 pub impl FromRow for Bool
 pub impl FromRow for Byte
 pub impl FromRow for Char
-pub impl FromRow for Int32
+pub impl FromRow for Int
 pub impl FromRow for Int16
 pub impl FromRow for Int64
-pub impl FromRow for UInt32
+pub impl FromRow for UInt
 pub impl FromRow for UInt16
 pub impl FromRow for UInt64
 pub impl FromRow for Float
@@ -111,10 +125,10 @@ pub(open) trait FromValue {
 pub impl FromValue for Bool
 pub impl FromValue for Byte
 pub impl FromValue for Char
-pub impl FromValue for Int32
+pub impl FromValue for Int
 pub impl FromValue for Int16
 pub impl FromValue for Int64
-pub impl FromValue for UInt32
+pub impl FromValue for UInt
 pub impl FromValue for UInt16
 pub impl FromValue for UInt64
 pub impl FromValue for Float
@@ -126,6 +140,12 @@ pub impl[T : @json.FromJson] FromValue for Array[T]
 pub impl FromValue for Json
 pub impl[V : @json.FromJson] FromValue for Map[String, V]
 pub impl[T : FromValue] FromValue for @ref.Ref[T]
+
+pub(open) trait QueryExecutor {
+  async fn query(Self, String, params? : Array[&ToValue]) -> &Rows raise TursoError
+  async fn query_one(Self, String, params? : Array[&ToValue]) -> Row raise TursoError
+  async fn execute(Self, String, params? : Array[&ToValue]) -> ExecResult raise TursoError
+}
 
 pub(open) trait Rows {
   async fn has_next(Self) -> Bool raise TursoError
@@ -141,10 +161,10 @@ pub impl ToValue for Unit
 pub impl ToValue for Bool
 pub impl ToValue for Byte
 pub impl ToValue for Char
-pub impl ToValue for Int32
+pub impl ToValue for Int
 pub impl ToValue for Int16
 pub impl ToValue for Int64
-pub impl ToValue for UInt32
+pub impl ToValue for UInt
 pub impl ToValue for UInt16
 pub impl ToValue for UInt64
 pub impl ToValue for Float

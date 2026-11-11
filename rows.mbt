@@ -19,6 +19,7 @@ pub struct ResultRows {
   stmt : @ffi.Stmt
   conn : @ffi.Conn
   pending : Ref[Array[@value.Value]?]
+  changes : Ref[Int64]
   done : Ref[Bool]
   closed : Ref[Bool]
 }
@@ -32,6 +33,10 @@ pub impl Rows for ResultRows with has_next(self) {
   match tag {
     0 => {
       self.done.val = true
+      if payload.length() >= 8 {
+        let rd : Rd = { b: payload, p: Ref(0) }
+        self.changes.val = rd.i64()
+      }
       false
     }
     2 => {
@@ -75,6 +80,10 @@ pub impl Rows for ResultRows with close(self) {
     @ffi.conn_wait_job(self.conn)
   }
 }
+
+///|
+/// 让具体类型上的 `rows.has_next()` 这类 dot 调用也成立（不只是 `&Rows`）。
+pub extend ResultRows with Rows::{has_next, get_row, columns, close}
 
 // ---------------------------------------------------------------------------
 // 二进制读游标（小端）
@@ -189,14 +198,12 @@ fn parse_cells(payload : Bytes, n_cols : Int) -> Array[@value.Value] raise Turso
 }
 
 ///|
-/// 执行查询，返回**流式**行读取器（读一个算一个，不物化）。
-///
-/// 临时入口：`query` 现在还是旧的 TSV 文本接口，等切片 3 把它换成这个。
-pub async fn Connection::query_rows(
+/// 打开一个流式行读取器（读一个算一个，不物化）。
+async fn Connection::open_rows(
   self : Connection,
   sql : String,
   params? : Array[&ToValue],
-) -> &Rows raise TursoError {
+) -> ResultRows raise TursoError {
   let stmt = @ffi.conn_prepare(self.raw, @utf8.encode(sql))
   check_error()
   bind_params(stmt, params)
@@ -228,7 +235,17 @@ pub async fn Connection::query_rows(
     stmt,
     conn: self.raw,
     pending: Ref(None),
+    changes: Ref(0L),
     done: Ref(false),
     closed: Ref(false),
   }
+}
+
+///|
+pub impl QueryExecutor for Connection with query(
+  self : Connection,
+  sql : String,
+  params? : Array[&ToValue],
+) -> &Rows raise TursoError {
+  self.open_rows(sql, params?)
 }

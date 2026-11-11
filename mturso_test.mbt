@@ -1,93 +1,166 @@
 ///|
+async fn one_int(conn : @mturso.Connection, sql : String) -> Int64 {
+  let rows = conn.query(sql)
+  defer rows.close()
+  assert_true(rows.has_next())
+  let row = rows.get_row()
+  let v : Int64 = row.get(0)
+  v
+}
+
+///|
 async test "basic query" {
   let db = @mturso.Database::open(":memory:")
+  defer db.close()
   let conn = db.connect()
-  inspect(
-    conn.exec("create table t(id integer primary key, name text)"),
-    content="0",
-  )
-  inspect(
-    conn.exec("insert into t(name) values ('alice'), ('bob')"),
-    content="2",
-  )
-  inspect(
-    conn.query("select id, name from t order by id"),
-    content="1\talice\n2\tbob",
-  )
-  inspect(conn.query("select 6 * 7"), content="42")
-  inspect(conn.query("select count(*) from t"), content="2")
-  conn.close()
-  db.close()
+  defer conn.close()
+
+  ignore(conn.execute("create table t(id integer primary key, name text)"))
+  let ins = conn.execute("insert into t(name) values ('alice'), ('bob')")
+  assert_true(ins.affected_rows() == 2)
+
+  let rows = conn.query("select id, name from t order by id")
+  defer rows.close()
+  assert_true(rows.has_next())
+  let r1 = rows.get_row()
+  let id1 : Int = r1.get(0)
+  let name1 : String = r1.get(1)
+  assert_true(id1 == 1)
+  assert_true(name1 == "alice")
+  assert_true(rows.has_next())
+  let r2 = rows.get_row()
+  let id2 : Int = r2.get(0)
+  assert_true(id2 == 2)
+  assert_true(!rows.has_next())
+
+  assert_true(one_int(conn, "select 6 * 7") == 42L)
+  assert_true(one_int(conn, "select count(*) from t") == 2L)
 }
 
 ///|
 async test "one database, multiple connections" {
   let db = @mturso.Database::open(":memory:")
+  defer db.close()
   let c1 = db.connect()
   let c2 = db.connect()
+  defer c1.close()
+  defer c2.close()
 
-  ignore(c1.exec("create table t(id integer primary key, v integer)"))
-  ignore(c1.exec("insert into t(v) values (1), (2)"))
-
-  // 另一个连接看到的是同一个库
-  inspect(c2.query("select count(*) from t"), content="2")
-  ignore(c2.exec("insert into t(v) values (3)"))
-  inspect(c1.query("select count(*) from t"), content="3")
-  inspect(c2.query("select sum(v) from t"), content="6")
-
-  c1.close()
-  c2.close()
-  db.close()
+  ignore(c1.execute("create table t(id integer primary key, v integer)"))
+  ignore(c1.execute("insert into t(v) values (1), (2)"))
+  assert_true(one_int(c2, "select count(*) from t") == 2L)
+  ignore(c2.execute("insert into t(v) values (3)"))
+  assert_true(one_int(c1, "select count(*) from t") == 3L)
+  assert_true(one_int(c2, "select sum(v) from t") == 6L)
 }
 
 ///|
 async test "transaction commit and rollback" {
   let db = @mturso.Database::open(":memory:")
+  defer db.close()
   let c1 = db.connect()
   let c2 = db.connect()
-  ignore(c1.exec("create table t(id integer primary key, v integer)"))
+  defer c1.close()
+  defer c2.close()
+  ignore(c1.execute("create table t(id integer primary key, v integer)"))
 
-  ignore(c1.exec("begin"))
-  ignore(c1.exec("insert into t(v) values (1)"))
-  ignore(c1.exec("commit"))
-  inspect(c2.query("select count(*) from t"), content="1")
+  ignore(c1.execute("begin"))
+  ignore(c1.execute("insert into t(v) values (1)"))
+  ignore(c1.execute("commit"))
+  assert_true(one_int(c2, "select count(*) from t") == 1L)
 
-  ignore(c1.exec("begin"))
-  ignore(c1.exec("insert into t(v) values (2)"))
-  ignore(c1.exec("rollback"))
-  inspect(c2.query("select count(*) from t"), content="1")
-
-  c1.close()
-  c2.close()
-  db.close()
+  ignore(c1.execute("begin"))
+  ignore(c1.execute("insert into t(v) values (2)"))
+  ignore(c1.execute("rollback"))
+  assert_true(one_int(c2, "select count(*) from t") == 1L)
 }
 
 ///|
 async test "query error raises TursoError::QueryError" {
   let db = @mturso.Database::open(":memory:")
+  defer db.close()
   let conn = db.connect()
-  let mut raised = false
-  try conn.query("select * from no_such_table") |> ignore catch {
+  defer conn.close()
+  let mut got = false
+  try ignore(conn.query("select * from no_such_table")) catch {
     @mturso.TursoError::QueryError(msg) => {
       assert_true(msg.length() > 0)
-      raised = true
+      got = true
     }
     _ => ()
   } noraise {
     _ => ()
   }
-  assert_true(raised)
-  conn.close()
-  db.close()
+  assert_true(got)
+}
+
+///|
+async test "blocking exec works without async runtime" {
+  let db = @mturso.Database::open(":memory:")
+  defer db.close()
+  let conn = db.connect()
+  defer conn.close()
+  ignore(conn.exec_blocking("create table t(x integer)"))
+  ignore(conn.exec_blocking("insert into t values (1), (2)"))
+  assert_true(one_int(conn, "select sum(x) from t") == 3L)
+}
+
+///|
+async test "慢查询（SQL 里 sleep 2s）不阻塞另一个连接上的快查询" {
+  let db = @mturso.Database::open(":memory:")
+  defer db.close()
+  let slow = db.connect()
+  let fast = db.connect()
+  defer slow.close()
+  defer fast.close()
+
+  let slow_ms : Ref[Int64] = { val: 0L, }
+  let fast_ms : Ref[Int64] = { val: 0L, }
+
+  @async.with_task_group(group => {
+    group.spawn_bg(() => {
+      let t = @async.now()
+      let rows = slow.query("select turso_sleep(2000)")
+      assert_true(rows.has_next())
+      let v : Int64 = rows.get_row().get(0)
+      assert_true(v == 2000L)
+      rows.close()
+      slow_ms.val = @async.now() - t
+    })
+    @async.sleep(200)
+    let t = @async.now()
+    let rows = fast.query("select 6 * 7")
+    assert_true(rows.has_next())
+    let v : Int64 = rows.get_row().get(0)
+    assert_true(v == 42L)
+    rows.close()
+    fast_ms.val = @async.now() - t
+  })
+
+  println(
+    "慢查询 select turso_sleep(2000) 返回用时 \{slow_ms.val}ms；快查询 select 6*7 返回用时 \{fast_ms.val}ms",
+  )
+  assert_true(slow_ms.val >= 2000L)
+  assert_true(fast_ms.val < 500L)
 }
 
 ///|
 async test "类型化行集：整数/浮点/文本/blob/null 按类型取到，不再是 TSV 文本" {
   let db = @mturso.Database::open(":memory:")
+  defer db.close()
   let conn = db.connect()
-  ignore(conn.exec_blocking("create table t(i integer, r real, s text, b blob, n integer)"))
-  ignore(conn.exec_blocking("insert into t values (42, 1.5, 'hi', x'0102', null)"))
-  let rows = conn.query_rows("select i, r, s, b, n from t")
+  defer conn.close()
+  ignore(
+    conn.exec_blocking(
+      "create table t(i integer, r real, s text, b blob, n integer)",
+    ),
+  )
+  ignore(
+    conn.exec_blocking(
+      "insert into t values (42, 1.5, 'hi', x'0102', null)",
+    ),
+  )
+  let rows = conn.query("select i, r, s, b, n from t")
   defer rows.close()
   let cols = rows.columns()
   assert_true(cols.length() == 5)
@@ -103,19 +176,34 @@ async test "类型化行集：整数/浮点/文本/blob/null 按类型取到，�
   assert_true(s == "hi")
   let b : Bytes = row.get(3)
   assert_true(b == b"\x01\x02")
-  // NULL 不再被渲染成字符串 "NULL"
   assert_true(row.value(4) == @mturso.Value::Null)
   assert_true(!rows.has_next())
-  conn.close()
-  db.close()
+}
+
+///|
+async test "参数化查询：query(sql, params) 走 MoonBit 侧 prepare+bind" {
+  let db = @mturso.Database::open(":memory:")
+  defer db.close()
+  let conn = db.connect()
+  defer conn.close()
+  ignore(conn.exec_blocking("create table t(a integer, b text)"))
+  ignore(conn.exec_blocking("insert into t values (1, 'x'), (2, 'y')"))
+
+  let rows = conn.query("select b from t where a = ?1", params=[2])
+  defer rows.close()
+  assert_true(rows.has_next())
+  let row = rows.get_row()
+  let b : String = row.get(0)
+  assert_true(b == "y")
+  assert_true(!rows.has_next())
 }
 
 ///|
 async test "参数绑定：单个 / 多个 / NULL，结果与字面量一致" {
   let db = @mturso.Database::open(":memory:")
+  defer db.close()
   let conn = db.connect()
   defer conn.close()
-  defer db.close()
   ignore(
     conn.exec_blocking(
       "create table t(a integer, b text, c blob, d integer, e real)",
@@ -127,7 +215,7 @@ async test "参数绑定：单个 / 多个 / NULL，结果与字面量一致" {
   )
   assert_true(n == 1L)
 
-  let rows = conn.query_rows("select a, b, c, d, e from t")
+  let rows = conn.query("select a, b, c, d, e from t")
   defer rows.close()
   assert_true(rows.has_next())
   let row = rows.get_row()
@@ -143,31 +231,12 @@ async test "参数绑定：单个 / 多个 / NULL，结果与字面量一致" {
 }
 
 ///|
-async test "参数化查询：query_rows(sql, params) 走 MoonBit 侧 prepare+bind" {
-  let db = @mturso.Database::open(":memory:")
-  let conn = db.connect()
-  defer conn.close()
-  defer db.close()
-  ignore(conn.exec_blocking("create table t(a integer, b text)"))
-  ignore(conn.exec_blocking("insert into t values (1, 'x'), (2, 'y')"))
-
-  let rows = conn.query_rows("select b from t where a = ?1", params=[2])
-  defer rows.close()
-  assert_true(rows.has_next())
-  let row = rows.get_row()
-  let b : String = row.get(0)
-  assert_true(b == "y")
-  // 拉完就结束（不物化，也没有多出来的行）
-  assert_true(!rows.has_next())
-}
-
-///|
 test "用已关闭的连接 → TursoError::ConnectionError" {
   let db = @mturso.Database::open(":memory:")
   let conn = db.connect()
   conn.close()
   let mut got = false
-  try ignore(conn.query_blocking("select 1")) catch {
+  try ignore(conn.exec_blocking("select 1")) catch {
     @mturso.TursoError::ConnectionError(msg) => {
       assert_true(msg.length() > 0)
       got = true
@@ -177,53 +246,5 @@ test "用已关闭的连接 → TursoError::ConnectionError" {
     _ => ()
   }
   assert_true(got)
-  db.close()
-}
-
-///|
-test "blocking API works without async runtime" {
-  let db = @mturso.Database::open(":memory:")
-  let conn = db.connect()
-  ignore(conn.exec_blocking("create table t(x integer)"))
-  ignore(conn.exec_blocking("insert into t values (1), (2)"))
-  inspect(conn.query_blocking("select sum(x) from t"), content="3")
-  conn.close()
-  db.close()
-}
-
-///|
-async test "慢查询（SQL 里 sleep 2s）不阻塞另一个连接上的快查询" {
-  let db = @mturso.Database::open(":memory:")
-  let slow = db.connect()
-  let fast = db.connect()
-
-  let slow_ms : Ref[Int64] = { val: 0L, }
-  let fast_ms : Ref[Int64] = { val: 0L, }
-
-  @async.with_task_group(group => {
-    // 慢查询：`turso_sleep(2000)` 在**执行该语句的工作线程**上睡 2 秒
-    // 注意：不用 no_wait=true —— 那样任务组退出时不会等它
-    group.spawn_bg(() => {
-      let t = @async.now()
-      inspect(slow.query("select turso_sleep(2000)"), content="2000")
-      slow_ms.val = @async.now() - t
-    })
-    // 等慢查询确实开始了，再在**另一个连接**上发快查询
-    @async.sleep(200)
-    let t = @async.now()
-    inspect(fast.query("select 6 * 7"), content="42")
-    fast_ms.val = @async.now() - t
-  })
-
-  println(
-    "慢查询 select turso_sleep(2000) 返回用时 \{slow_ms.val}ms；快查询 select 6*7 返回用时 \{fast_ms.val}ms",
-  )
-  // 慢查询确实睡满了 2 秒
-  assert_true(slow_ms.val >= 2000L)
-  // 快查询在慢查询仍在跑的时候就返回了（若被阻塞，它得等到约 2000ms）
-  assert_true(fast_ms.val < 500L)
-
-  slow.close()
-  fast.close()
   db.close()
 }

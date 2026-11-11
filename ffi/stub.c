@@ -418,6 +418,7 @@ static void stream_stmt_rows(turso_statement_t *stmt, int fd) {
   }
 
   frame_begin(&sb, FRAME_END);
+  put_i64(&sb, turso_statement_n_change(stmt));
   (void)flush_frame(fd, &sb);
 
 done:
