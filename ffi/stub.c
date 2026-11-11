@@ -26,7 +26,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/socket.h>
 #include <unistd.h>
 
 #include "turso.h"
@@ -1052,8 +1051,9 @@ int32_t mturso_submit_stmt_rows(mturso_conn_t *conn, mturso_stmt_t *stmt) {
     return -1;
   }
   int fds[2];
-  // 双向通道（socketpair）；现在只用于结果帧，将来请求也可以走它。
-  if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0) {
+  // 单向结果通道：worker 写 fds[1]，MoonBit 读 fds[0]。
+  // 关读端 → worker 的 write 拿 EPIPE → 立刻停（取消）。
+  if (pipe(fds) != 0) {
     set_err("failed to create result channel");
     return -1;
   }
