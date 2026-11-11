@@ -34,11 +34,6 @@ pub extern "c" fn db_close(db : Db) = "mturso_db_close"
 #borrow(conn, sql)
 pub extern "c" fn conn_exec(conn : Conn, sql : Bytes) -> Int64 = "mturso_conn_exec"
 
-///|
-/// 执行查询，返回制表符/换行分隔的文本；失败返回空 `Bytes`。
-#borrow(conn, sql)
-pub extern "c" fn conn_query(conn : Conn, sql : Bytes) -> Bytes = "mturso_conn_query"
-
 // ---------------------------------------------------------------------------
 // 语句句柄（薄壳）：prepare / bind_positional_* / deinit，全是 1:1 镜像。
 // ---------------------------------------------------------------------------
@@ -122,31 +117,3 @@ pub extern "c" fn last_error() -> Bytes = "mturso_last_error"
 /// 4 = Connection）。消息仍是文本，分类给上层做模式匹配。
 pub extern "c" fn last_error_kind() -> Int = "mturso_last_error_kind"
 
-// ---------------------------------------------------------------------------
-// 异步路径：提交给本连接的工作线程，完成后敲「门铃」pipe
-// ---------------------------------------------------------------------------
-
-///|
-/// 立刻返回：把查询提交给本连接的工作线程执行。
-#borrow(conn, sql)
-pub extern "c" fn submit_query(conn : Conn, sql : Bytes) = "mturso_submit_query"
-
-///|
-/// 立刻返回：把非查询语句提交给本连接的工作线程执行。
-#borrow(conn, sql)
-pub extern "c" fn submit_exec(conn : Conn, sql : Bytes) = "mturso_submit_exec"
-
-///|
-/// 取回门铃的读端 fd（**所有权转移**给调用方，只能取一次）。失败返回 -1。
-#borrow(conn)
-pub extern "c" fn conn_bell_fd(conn : Conn) -> Int = "mturso_conn_bell_fd"
-
-///|
-/// 取回异步查询结果（失败返回空 `Bytes`，原因见 `last_error()`）。
-#borrow(conn)
-pub extern "c" fn take_query(conn : Conn) -> Bytes = "mturso_take_query"
-
-///|
-/// 取回异步 exec 的受影响行数（失败返回 -1）。
-#borrow(conn)
-pub extern "c" fn take_exec(conn : Conn) -> Int64 = "mturso_take_exec"

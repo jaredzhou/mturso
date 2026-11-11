@@ -2,8 +2,6 @@
 package "jaredzhou/mturso/ffi"
 
 // Values
-pub fn conn_bell_fd(Conn) -> Int32
-
 pub fn conn_close(Conn) -> Unit
 
 pub fn conn_exec(Conn, Bytes) -> Int64
@@ -16,8 +14,6 @@ pub fn conn_prepare(Conn, Bytes) -> Stmt
 
 pub fn conn_prepare_first(Conn, Bytes) -> Stmt
 
-pub fn conn_query(Conn, Bytes) -> Bytes
-
 pub fn conn_wait_job(Conn) -> Unit
 
 pub fn db_close(Db) -> Unit
@@ -28,33 +24,25 @@ pub fn db_open(Bytes) -> Db
 
 pub fn last_error() -> Bytes
 
-pub fn last_error_kind() -> Int32
+pub fn last_error_kind() -> Int
 
-pub fn stmt_bind_blob(Stmt, Int32, Bytes) -> Unit
+pub fn stmt_bind_blob(Stmt, Int, Bytes) -> Unit
 
-pub fn stmt_bind_double(Stmt, Int32, Double) -> Unit
+pub fn stmt_bind_double(Stmt, Int, Double) -> Unit
 
-pub fn stmt_bind_int(Stmt, Int32, Int64) -> Unit
+pub fn stmt_bind_int(Stmt, Int, Int64) -> Unit
 
-pub fn stmt_bind_null(Stmt, Int32) -> Unit
+pub fn stmt_bind_null(Stmt, Int) -> Unit
 
-pub fn stmt_bind_text(Stmt, Int32, Bytes) -> Unit
+pub fn stmt_bind_text(Stmt, Int, Bytes) -> Unit
 
-pub fn stmt_column_count(Stmt) -> Int32
+pub fn stmt_column_count(Stmt) -> Int
 
 pub fn stmt_deinit(Stmt) -> Unit
 
 pub fn stmt_tail(Stmt) -> Int64
 
-pub fn submit_exec(Conn, Bytes) -> Unit
-
-pub fn submit_query(Conn, Bytes) -> Unit
-
-pub fn submit_stmt_rows(Conn, Stmt) -> Int32
-
-pub fn take_exec(Conn) -> Int64
-
-pub fn take_query(Conn) -> Bytes
+pub fn submit_stmt_rows(Conn, Stmt) -> Int
 
 // Errors
 
