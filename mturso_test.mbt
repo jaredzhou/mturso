@@ -143,6 +143,25 @@ async test "参数绑定：单个 / 多个 / NULL，结果与字面量一致" {
 }
 
 ///|
+async test "参数化查询：query_rows(sql, params) 走 MoonBit 侧 prepare+bind" {
+  let db = @mturso.Database::open(":memory:")
+  let conn = db.connect()
+  defer conn.close()
+  defer db.close()
+  ignore(conn.exec_blocking("create table t(a integer, b text)"))
+  ignore(conn.exec_blocking("insert into t values (1, 'x'), (2, 'y')"))
+
+  let rows = conn.query_rows("select b from t where a = ?1", params=[2])
+  defer rows.close()
+  assert_true(rows.has_next())
+  let row = rows.get_row()
+  let b : String = row.get(0)
+  assert_true(b == "y")
+  // 拉完就结束（不物化，也没有多出来的行）
+  assert_true(!rows.has_next())
+}
+
+///|
 test "用已关闭的连接 → TursoError::ConnectionError" {
   let db = @mturso.Database::open(":memory:")
   let conn = db.connect()

@@ -353,17 +353,11 @@ static void send_err_frame(int fd, strbuf_t *sb, const char *msg, int kind) {
 }
 
 // 跑完这条语句，把结果按帧推进 fd。写失败就停（读端关掉 = 取消）。
-static void stream_query_rows(turso_connection_t *conn, const char *sql, int fd) {
+// 把一条**已经 prepare 好**的语句跑到完，把结果按帧推进 fd。
+// 不负责 deinit：语句的所有权归调用方。
+static void stream_stmt_rows(turso_statement_t *stmt, int fd) {
   const char *err = NULL;
-  turso_statement_t *stmt = NULL;
   strbuf_t sb = {0};
-  turso_status_code_t pst = turso_connection_prepare_single(conn, sql, &stmt, &err);
-  if (pst != TURSO_OK) {
-    send_err_frame(fd, &sb, err, kind_from_status(pst));
-    free(sb.buf);
-    return;
-  }
-
   int64_t n_cols = turso_statement_column_count(stmt);
   frame_begin(&sb, FRAME_HEADER);
   put_u32(&sb, (uint32_t)n_cols);
@@ -426,8 +420,22 @@ static void stream_query_rows(turso_connection_t *conn, const char *sql, int fd)
   (void)flush_frame(fd, &sb);
 
 done:
-  turso_statement_deinit(stmt);
   free(sb.buf);
+}
+
+// 从 SQL 出发：prepare → 流式推帧 → deinit。
+static void stream_query_rows(turso_connection_t *conn, const char *sql, int fd) {
+  const char *err = NULL;
+  turso_statement_t *stmt = NULL;
+  strbuf_t sb = {0};
+  turso_status_code_t pst = turso_connection_prepare_single(conn, sql, &stmt, &err);
+  if (pst != TURSO_OK) {
+    send_err_frame(fd, &sb, err, kind_from_status(pst));
+    free(sb.buf);
+    return;
+  }
+  stream_stmt_rows(stmt, fd);
+  turso_statement_deinit(stmt);
 }
 
 
@@ -528,6 +536,8 @@ typedef struct {
   int job_is_query;
   int job_stream;      // 1 = 结果按帧推进 stream_fd；0 = 旧路径（门铃 1 字节 + take_*）
   int stream_fd;       // -1 = 无
+  turso_statement_t *job_stmt; // 非 NULL = 跑一条已经 prepare 好的语句
+  int busy;            // 1 = 有 job 在跑（wait_job 用）
   char *job_sql;       // C 堆（从 MoonBit 拷贝），worker 负责 free
   int job_done;
   char *result;        // worker 写的查询结果（C 堆）
@@ -557,13 +567,17 @@ static void *conn_worker(void *arg) {
     int is_query = h->job_is_query;
     int stream = h->job_stream;
     int sfd = h->stream_fd;
+    turso_statement_t *jstmt = h->job_stmt;
     h->job_sql = NULL;
+    h->job_stmt = NULL;
     h->has_job = 0;
     pthread_mutex_unlock(&h->mu);
 
     // 流式：把结果按帧推进 pipe。帧本身才是信号，所以不敲 1 字节门铃。
     if (stream) {
-      if (h->conn == NULL) {
+      if (jstmt != NULL) {
+        stream_stmt_rows(jstmt, sfd);
+      } else if (h->conn == NULL) {
         strbuf_t se = {0};
         send_err_frame(sfd, &se, "connection is not open", MTURSO_ERR_CONNECTION);
         free(se.buf);
@@ -574,8 +588,10 @@ static void *conn_worker(void *arg) {
       free(sql);
       pthread_mutex_lock(&h->mu);
       h->stream_fd = -1;
+      h->busy = 0;
       h->failed = 0;
       h->job_done = 1;
+      pthread_cond_broadcast(&h->cv);
       pthread_mutex_unlock(&h->mu);
       continue;
     }
@@ -607,7 +623,9 @@ static void *conn_worker(void *arg) {
     h->failed = failed;
     h->kind = kind;
     snprintf(h->err, sizeof(h->err), "%s", errbuf);
+    h->busy = 0;
     h->job_done = 1;
+    pthread_cond_broadcast(&h->cv);
     pthread_mutex_unlock(&h->mu);
 
     // 敲门铃（先发布结果，再敲）
@@ -760,12 +778,49 @@ static void submit_job(mturso_conn_t *conn, moonbit_bytes_t sql, int is_query, i
   conn->job_is_query = is_query;
   conn->job_stream = (stream_fd >= 0) ? 1 : 0;
   conn->stream_fd = stream_fd;
+  conn->job_stmt = NULL;
+  conn->busy = 1;
   conn->job_done = 0;
   conn->failed = 0;
   conn->err[0] = '\0';
   conn->has_job = 1;
   pthread_cond_signal(&conn->cv);
   pthread_mutex_unlock(&conn->mu);
+}
+
+// 提交一条已经 prepare 好的语句（结果走 stream_fd）。
+static int submit_stmt_job(mturso_conn_t *conn, turso_statement_t *stmt, int stream_fd) {
+  if (conn == NULL || conn->conn == NULL) {
+    set_err("connection is not open");
+    return -1;
+  }
+  if (!conn->worker_started) {
+    set_err("worker thread is not running");
+    return -1;
+  }
+  pthread_mutex_lock(&conn->mu);
+  if (conn->has_job) {
+    pthread_mutex_unlock(&conn->mu);
+    set_err("a job is already in flight on this connection");
+    return -1;
+  }
+  if (conn->result != NULL) {
+    free(conn->result);
+    conn->result = NULL;
+  }
+  conn->job_sql = NULL;
+  conn->job_is_query = 1;
+  conn->job_stream = 1;
+  conn->stream_fd = stream_fd;
+  conn->job_stmt = stmt;
+  conn->busy = 1;
+  conn->job_done = 0;
+  conn->failed = 0;
+  conn->err[0] = '\0';
+  conn->has_job = 1;
+  pthread_cond_signal(&conn->cv);
+  pthread_mutex_unlock(&conn->mu);
+  return 0;
 }
 
 MOONBIT_FFI_EXPORT
@@ -1006,4 +1061,38 @@ int64_t mturso_conn_exec_stmt(mturso_conn_t *conn, mturso_stmt_t *stmt) {
     return -1;
   }
   return turso_statement_n_change(stmt->stmt);
+}
+
+// 流式行集：跑一条已经 prepare + bind 好的语句。返回读端 fd（-1 = 失败）。
+MOONBIT_FFI_EXPORT
+int32_t mturso_submit_stmt_rows(mturso_conn_t *conn, mturso_stmt_t *stmt) {
+  clear_err();
+  if (stmt == NULL || stmt->stmt == NULL) {
+    set_err("statement is not open");
+    return -1;
+  }
+  int fds[2];
+  if (pipe(fds) != 0) {
+    set_err("failed to create result pipe");
+    return -1;
+  }
+  if (submit_stmt_job(conn, stmt->stmt, fds[1]) != 0) {
+    close(fds[0]);
+    close(fds[1]);
+    return -1;
+  }
+  return (int32_t)fds[0];
+}
+
+// 等当前 job 结束（close() 在释放语句前调用它）。
+MOONBIT_FFI_EXPORT
+void mturso_conn_wait_job(mturso_conn_t *conn) {
+  if (conn == NULL) {
+    return;
+  }
+  pthread_mutex_lock(&conn->mu);
+  while (conn->busy) {
+    pthread_cond_wait(&conn->cv, &conn->mu);
+  }
+  pthread_mutex_unlock(&conn->mu);
 }

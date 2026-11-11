@@ -16,6 +16,8 @@ pub(open) trait Rows {
 pub struct ResultRows {
   stream : @raw_fd.RawFdStream
   columns : Array[@value.Column]
+  stmt : @ffi.Stmt
+  conn : @ffi.Conn
   pending : Ref[Array[@value.Value]?]
   done : Ref[Bool]
   closed : Ref[Bool]
@@ -69,6 +71,8 @@ pub impl Rows for ResultRows with close(self) {
     self.closed.val = true
     // 关掉读端：worker 的 write 会拿到 EPIPE，立刻停下（这就是取消）
     self.stream.close()
+    // 等 worker 真的停了，之后 stmt 才能安全释放
+    @ffi.conn_wait_job(self.conn)
   }
 }
 
@@ -188,31 +192,41 @@ fn parse_cells(payload : Bytes, n_cols : Int) -> Array[@value.Value] raise Turso
 /// 执行查询，返回**流式**行读取器（读一个算一个，不物化）。
 ///
 /// 临时入口：`query` 现在还是旧的 TSV 文本接口，等切片 3 把它换成这个。
-pub async fn Connection::query_rows(self : Connection, sql : String) -> &Rows raise TursoError {
-  let fd = @ffi.submit_rows(self.raw, @utf8.encode(sql))
+pub async fn Connection::query_rows(
+  self : Connection,
+  sql : String,
+  params? : Array[&ToValue],
+) -> &Rows raise TursoError {
+  let stmt = @ffi.conn_prepare(self.raw, @utf8.encode(sql))
+  check_error()
+  bind_params(stmt, params)
+  let fd = @ffi.submit_stmt_rows(self.raw, stmt)
   check_error()
   if fd < 0 {
     raise TursoError::ConnectionError("failed to start streaming query")
   }
   let stream = @raw_fd.RawFdStream(fd) catch {
-    _ => raise TursoError::ConnectionError("failed to wrap result fd")
+    _ => {
+      @ffi.conn_wait_job(self.raw)
+      raise TursoError::ConnectionError("failed to wrap result fd")
+    }
   }
   // 先把 HEADER 拉下来：列信息，顺便把执行期的错误在返回前暴露出来
+  errdefer {
+    stream.close()
+    @ffi.conn_wait_job(self.raw)
+  }
   let (tag, payload) = read_frame(stream)
   match tag {
     1 => ()
-    3 => {
-      stream.close()
-      raise stream_error(payload)
-    }
-    _ => {
-      stream.close()
-      raise TursoError::QueryError("unexpected first frame tag \{tag}")
-    }
+    3 => raise stream_error(payload)
+    _ => raise TursoError::QueryError("unexpected first frame tag \{tag}")
   }
   {
     stream,
     columns: parse_columns(payload),
+    stmt,
+    conn: self.raw,
     pending: Ref(None),
     done: Ref(false),
     closed: Ref(false),

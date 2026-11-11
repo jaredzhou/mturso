@@ -13,16 +13,7 @@ fn bind_one(stmt : @ffi.Stmt, pos : Int, v : @value.Value) -> Unit {
 }
 
 ///|
-/// 同步：带位置参数的 execute（`?1`..）。prepare + bind 在 MoonBit 侧完成，
-/// C 里没有任何参数编码。
-pub fn Connection::exec_params(
-  self : Connection,
-  sql : String,
-  params? : Array[&ToValue],
-) -> Int64 raise TursoError {
-  let stmt = @ffi.conn_prepare(self.raw, @utf8.encode(sql))
-  check_error()
-  defer @ffi.stmt_deinit(stmt)
+fn bind_params(stmt : @ffi.Stmt, params : Array[&ToValue]?) -> Unit raise TursoError {
   match params {
     None => ()
     Some(ps) => {
@@ -34,6 +25,20 @@ pub fn Connection::exec_params(
       }
     }
   }
+}
+
+///|
+/// 同步：带位置参数的 execute（`?1`..）。prepare + bind 在 MoonBit 侧完成，
+/// C 里没有任何参数编码。
+pub fn Connection::exec_params(
+  self : Connection,
+  sql : String,
+  params? : Array[&ToValue],
+) -> Int64 raise TursoError {
+  let stmt = @ffi.conn_prepare(self.raw, @utf8.encode(sql))
+  check_error()
+  defer @ffi.stmt_deinit(stmt)
+  bind_params(stmt, params)
   let changes = @ffi.conn_exec_stmt(self.raw, stmt)
   check_error()
   changes

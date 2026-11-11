@@ -37,7 +37,7 @@ pub fn Connection::exec_blocking(Self, String) -> Int64 raise TursoError
 pub fn Connection::exec_params(Self, String, params? : Array[&ToValue]) -> Int64 raise TursoError
 pub async fn Connection::query(Self, String) -> String raise TursoError
 pub fn Connection::query_blocking(Self, String) -> String raise TursoError
-pub async fn Connection::query_rows(Self, String) -> &Rows raise TursoError
+pub async fn Connection::query_rows(Self, String, params? : Array[&ToValue]) -> &Rows raise TursoError
 
 pub struct Database {
   raw : @ffi.Db
@@ -49,6 +49,8 @@ pub fn Database::open(String) -> Self raise TursoError
 pub struct ResultRows {
   stream : @raw_fd.RawFdStream
   columns : Array[@value.Column]
+  stmt : @ffi.Stmt
+  conn : @ffi.Conn
   pending : @ref.Ref[Array[@value.Value]?]
   done : @ref.Ref[Bool]
   closed : @ref.Ref[Bool]
