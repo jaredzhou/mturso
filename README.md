@@ -24,7 +24,8 @@ async fn main {
 
 ## Features
 
-- **`query` / `query_one` / `execute`** — `query` streams typed rows as `Int`, `Double`, `String`, `Bytes`, and friends; `query_one` returns one `Row`; `execute` returns `ExecResult` with affected rows. `fetch` / `fetch_one` collect results into `Array[T]` or a single `T` in one line. No rendered text to parse.
+- **`query` / `query_one`** — the typed read path: `query` streams `Row`s and `query_one` returns one `Row`; both decode `Int`, `Double`, `String`, `Bytes`, and custom types through `FromValue`. `fetch` / `fetch_one` collect them into `Array[T]` or a single `T`.
+- **`execute`** — runs DDL/DML and returns `ExecResult` with affected rows, without rendering or parsing result text.
 - **Bind values safely with `ToValue`** — pass `params=[...]` and let `ToValue` encode integers, floats, strings, blobs, options, JSON, timestamps and tuples; `FromValue` / `FromRow` decode them back. No SQL string building.
 - **Built-in connection pool** — `Database` is the pool: `max_conns` caps concurrency, `db.query` / `db.execute` borrow a connection automatically, `db.connect()` checks one out explicitly, and `db.stats()` shows contention.
 - **First-class transactions** — `begin_tx` / `commit` / `rollback`, with `Deferred`, `Immediate`, `Exclusive`, and Turso's `BEGIN CONCURRENT`; `begin_func` commits on success and rolls back on error.
