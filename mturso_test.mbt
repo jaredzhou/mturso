@@ -302,6 +302,54 @@ test "用已关闭的连接 → TursoError::ConnectionError" {
 }
 
 ///|
+///|
+async fn insert3(tx : @mturso.ConnTx) -> Int raise @mturso.TursoError {
+  ignore(tx.execute("insert into t(v) values (3)"))
+  0
+}
+
+///|
+async test "事务：commit / rollback / begin_func / 重复 commit" {
+  let db = @mturso.Database::open(":memory:")
+  defer db.close()
+  let c1 = db.connect()
+  let c2 = db.connect()
+  defer c1.close()
+  defer c2.close()
+  ignore(c1.execute("create table t(id integer primary key, v integer)"))
+
+  // commit
+  let tx = c1.begin_tx()
+  ignore(tx.execute("insert into t(v) values (1)"))
+  tx.commit()
+  assert_true(one_int(c2, "select count(*) from t") == 1L)
+
+  // 重复 commit 报错
+  let mut twice = false
+  try ignore(tx.commit()) catch {
+    _ => twice = true
+  } noraise {
+    _ => ()
+  }
+  assert_true(twice)
+
+  // rollback（显式 Immediate 模式）
+  let tx2 = c1.begin_tx(
+    opts=@mturso.TxOptions::{
+      mode: Some(@mturso.TxMode::Immediate),
+      read_only: None,
+    },
+  )
+  ignore(tx2.execute("insert into t(v) values (2)"))
+  tx2.rollback()
+  assert_true(one_int(c2, "select count(*) from t") == 1L)
+
+  // begin_func：成功提交
+  ignore(@mturso.begin_func(c1, insert3))
+  assert_true(one_int(c2, "select count(*) from t") == 2L)
+}
+
+///|
 async test "观测方法：is_closed / last_insert_rowid / sqlite_version" {
   let db = @mturso.Database::open(":memory:")
   defer db.close()

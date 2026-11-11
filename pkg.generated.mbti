@@ -11,6 +11,7 @@ import {
 }
 
 // Values
+pub async fn[T, B : TxBeginner] begin_func(B, async (ConnTx) -> T raise TursoError) -> T raise TursoError
 
 // Errors
 pub suberror TursoError {
@@ -26,11 +27,24 @@ pub(all) suberror ValueError {
 }
 
 // Types and methods
+pub struct ConnTx {
+  conn : Connection
+  done : @ref.Ref[Bool]
+}
+pub async fn ConnTx::commit(Self) -> Unit raise TursoError
+pub async fn ConnTx::execute(Self, String, params? : Array[&ToValue]) -> ExecResult raise TursoError
+pub async fn ConnTx::query(Self, String, params? : Array[&ToValue]) -> &Rows raise TursoError
+pub async fn ConnTx::query_one(Self, String, params? : Array[&ToValue]) -> Row raise TursoError
+pub async fn ConnTx::rollback(Self) -> Unit raise TursoError
+pub impl QueryExecutor for ConnTx
+pub impl Tx for ConnTx
+
 pub struct Connection {
   db : Database
   raw : @ffi.Conn
   closed : @ref.Ref[Bool]
 }
+pub async fn Connection::begin_tx(Self, opts? : TxOptions) -> ConnTx raise TursoError
 pub fn Connection::close(Self) -> Unit
 pub fn Connection::exec_blocking(Self, String) -> Int64 raise TursoError
 pub fn Connection::exec_params(Self, String, params? : Array[&ToValue]) -> Int64 raise TursoError
@@ -44,6 +58,7 @@ pub async fn Connection::query_one(Self, String, params? : Array[&ToValue]) -> R
 pub async fn Connection::sqlite_version(Self) -> String raise TursoError
 pub impl Fetching for Connection
 pub impl QueryExecutor for Connection
+pub impl TxBeginner for Connection
 
 pub struct Database {
   raw : @ffi.Db
@@ -88,6 +103,19 @@ pub fn Timestamp::unix(Self) -> Int64 raise ValueError
 pub impl FromRow for Timestamp
 pub impl FromValue for Timestamp
 pub impl ToValue for Timestamp
+
+pub(all) enum TxMode {
+  Deferred
+  Immediate
+  Exclusive
+  Concurrent
+} derive(Eq, @debug.Debug)
+
+pub(all) struct TxOptions {
+  mode : TxMode?
+  read_only : Bool?
+} derive(Eq, @debug.Debug)
+pub fn TxOptions::default() -> Self
 
 // Type aliases
 pub using @value {type Column}
@@ -190,3 +218,12 @@ pub impl[T : ToJson] ToValue for Array[T]
 pub impl ToValue for Json
 pub impl[V : ToJson] ToValue for Map[String, V]
 pub impl[T : ToValue] ToValue for @ref.Ref[T]
+
+pub(open) trait Tx : QueryExecutor {
+  async fn commit(Self) -> Unit raise TursoError
+  async fn rollback(Self) -> Unit raise TursoError
+}
+
+pub(open) trait TxBeginner {
+  async fn begin_tx(Self, opts? : TxOptions) -> ConnTx raise TursoError
+}
