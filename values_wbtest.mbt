@@ -97,6 +97,7 @@ test "FromRow：元组按列顺序映射，列元信息可读" {
       @value.Column::{ name: "id", decltype: "INTEGER", },
       @value.Column::{ name: "name", decltype: "TEXT", },
     ],
+    raw: [],
   }
   assert_true(row.len() == 3)
   assert_true(row.columns().length() == 2)

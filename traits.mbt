@@ -17,6 +17,7 @@ pub(open) trait FromValue {
 pub struct Row {
   values : Array[@value.Value]
   columns : Array[@value.Column]
+  raw : Array[Bytes]
 }
 
 ///|
@@ -33,6 +34,13 @@ pub fn[T : FromValue] Row::get(self : Row, index : Int) -> T raise TursoError {
 /// 取下标的原始 `Value`（不抛——想精确区分类型的人用这个）。
 pub fn Row::value(self : Row, index : Int) -> @value.Value {
   self.values[index]
+}
+
+///|
+/// 取下标的**原始字节**（`Text` 返回未解码的 UTF-8 字节，`Blob` 返回其字节；
+/// 其它类型返回空）。
+pub fn Row::value_raw(self : Row, index : Int) -> Bytes {
+  self.raw[index]
 }
 
 ///|

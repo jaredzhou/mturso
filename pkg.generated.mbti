@@ -106,6 +106,7 @@ pub struct ResultRows {
   conn : @ffi.Conn
   release : Connection?
   pending : @ref.Ref[Array[@value.Value]?]
+  pending_raw : @ref.Ref[Array[Bytes]?]
   changes : @ref.Ref[Int64]
   done : @ref.Ref[Bool]
   closed : @ref.Ref[Bool]
@@ -127,11 +128,13 @@ pub fn RetryOptions::default() -> Self
 pub struct Row {
   values : Array[@value.Value]
   columns : Array[@value.Column]
+  raw : Array[Bytes]
 }
 pub fn Row::columns(Self) -> Array[@value.Column]
 pub fn[T : FromValue] Row::get(Self, Int) -> T raise TursoError
 pub fn Row::len(Self) -> Int
 pub fn Row::value(Self, Int) -> @value.Value
+pub fn Row::value_raw(Self, Int) -> Bytes
 
 pub(all) struct Timestamp(String) derive(Eq, @debug.Debug)
 pub fn Timestamp::from_unix(Int64) -> Self

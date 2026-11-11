@@ -20,6 +20,7 @@ pub struct ResultRows {
   conn : @ffi.Conn
   release : Connection?
   pending : Ref[Array[@value.Value]?]
+  pending_raw : Ref[Array[Bytes]?]
   changes : Ref[Int64]
   done : Ref[Bool]
   closed : Ref[Bool]
@@ -41,7 +42,9 @@ pub impl Rows for ResultRows with has_next(self) {
       false
     }
     2 => {
-      self.pending.val = Some(parse_cells(payload, self.columns.length()))
+      let (values, raws) = parse_cells(payload, self.columns.length())
+      self.pending.val = Some(values)
+      self.pending_raw.val = Some(raws)
       true
     }
     3 => {
@@ -60,7 +63,12 @@ pub impl Rows for ResultRows with get_row(self) {
   match self.pending.val {
     Some(values) => {
       self.pending.val = None
-      { values, columns: self.columns }
+      let raws = match self.pending_raw.val {
+        Some(r) => r
+        None => []
+      }
+      self.pending_raw.val = None
+      { values, columns: self.columns, raw: raws }
     }
     None => raise TursoError::QueryError("no pending row; call has_next() first")
   }
@@ -185,22 +193,35 @@ fn parse_columns(payload : Bytes) -> Array[@value.Column] raise TursoError {
 }
 
 ///|
-fn parse_cells(payload : Bytes, n_cols : Int) -> Array[@value.Value] raise TursoError {
+fn parse_cells(
+  payload : Bytes,
+  n_cols : Int,
+) -> (Array[@value.Value], Array[Bytes]) raise TursoError {
   let rd : Rd = { b: payload, p: Ref(0) }
   let vals : Array[@value.Value] = []
+  let raws : Array[Bytes] = []
   for _ in 0..<n_cols {
     let kind = rd.u8()
-    vals.push(
-      match kind {
-        1 => @value.Value::Integer(rd.i64())
-        2 => @value.Value::Real(rd.f64())
-        3 => @value.Value::Text(@utf8.decode_lossy(rd.bytes()))
-        4 => @value.Value::Blob(rd.bytes())
-        _ => @value.Value::Null
-      },
-    )
+    if kind == 3 {
+      let b = rd.bytes()
+      vals.push(@value.Value::Text(@utf8.decode_lossy(b)))
+      raws.push(b)
+    } else if kind == 4 {
+      let b = rd.bytes()
+      vals.push(@value.Value::Blob(b))
+      raws.push(b)
+    } else if kind == 1 {
+      vals.push(@value.Value::Integer(rd.i64()))
+      raws.push(b"")
+    } else if kind == 2 {
+      vals.push(@value.Value::Real(rd.f64()))
+      raws.push(b"")
+    } else {
+      vals.push(@value.Value::Null)
+      raws.push(b"")
+    }
   }
-  vals
+  (vals, raws)
 }
 
 ///|
@@ -258,6 +279,7 @@ async fn Connection::open_rows(
     conn: self.raw,
     release,
     pending: Ref(None),
+    pending_raw: Ref(None),
     changes: Ref(0L),
     done: Ref(false),
     closed: Ref(false),

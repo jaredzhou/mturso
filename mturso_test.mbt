@@ -349,6 +349,25 @@ async test "事务：commit / rollback / begin_func / 重复 commit" {
 }
 
 ///|
+async test "value_raw：非法 UTF-8 文本宽松解码 + 原始字节" {
+  let db = @mturso.Database::open(":memory:")
+  defer db.close()
+  let conn = db.connect()
+  defer conn.close()
+  ignore(conn.exec_blocking("create table t(s text)"))
+  ignore(conn.exec_blocking("insert into t values (x'fffe')"))
+  let rows = conn.query("select s from t")
+  defer rows.close()
+  assert_true(rows.has_next())
+  let row = rows.get_row()
+  // String <- Blob：宽松解码不报错
+  let s : String = row.get(0)
+  assert_true(s.length() > 0)
+  // 原始字节仍然精确
+  assert_true(row.value_raw(0) == b"\xff\xfe")
+}
+
+///|
 async test "#7 池上隐式 acquire/release + 池事务 + 统计" {
   let db = @mturso.Database::open(":memory:", max_conns=2)
   defer db.close()
