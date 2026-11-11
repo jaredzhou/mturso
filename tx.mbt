@@ -35,9 +35,7 @@ pub(open) trait Tx: QueryExecutor {
 ///|
 /// 能开事务的东西（本版：`Connection`）。
 pub(open) trait TxBeginner {
-  // 返回具体类型（而不是 &Tx），这样 `tx.execute(...)` / `tx.commit()` 能直接 dot 调用；
-  // ConnTx 本身实现 Tx + QueryExecutor，需要 trait 对象时仍可强转。
-  async fn begin_tx(Self, opts? : TxOptions) -> ConnTx raise TursoError
+  async fn begin_tx(Self, opts? : TxOptions) -> &Tx raise TursoError
 }
 
 ///|
@@ -102,7 +100,7 @@ pub extend ConnTx with Tx::{commit, rollback}
 pub impl TxBeginner for Connection with begin_tx(
   self : Connection,
   opts? : TxOptions,
-) -> ConnTx raise TursoError {
+) -> &Tx raise TursoError {
   let mode = match opts {
     None => None
     Some(o) => o.mode
@@ -124,7 +122,7 @@ pub extend Connection with TxBeginner::{begin_tx}
 /// 开事务 → 跑 `f` → 成功 commit；出错 rollback（吞掉 rollback 的错）后重新抛出。
 pub async fn[T, B : TxBeginner] begin_func(
   beginner : B,
-  f : async (ConnTx) -> T raise TursoError,
+  f : async (&Tx) -> T raise TursoError,
 ) -> T raise TursoError {
   let tx = beginner.begin_tx()
   errdefer {

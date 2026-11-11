@@ -11,7 +11,7 @@ import {
 }
 
 // Values
-pub async fn[T, B : TxBeginner] begin_func(B, async (ConnTx) -> T raise TursoError) -> T raise TursoError
+pub async fn[T, B : TxBeginner] begin_func(B, async (&Tx) -> T raise TursoError) -> T raise TursoError
 
 // Errors
 pub suberror TursoError {
@@ -44,7 +44,7 @@ pub struct Connection {
   raw : @ffi.Conn
   closed : @ref.Ref[Bool]
 }
-pub async fn Connection::begin_tx(Self, opts? : TxOptions) -> ConnTx raise TursoError
+pub async fn Connection::begin_tx(Self, opts? : TxOptions) -> &Tx raise TursoError
 pub fn Connection::close(Self) -> Unit
 pub fn Connection::exec_blocking(Self, String) -> Int64 raise TursoError
 pub fn Connection::exec_params(Self, String, params? : Array[&ToValue]) -> Int64 raise TursoError
@@ -225,5 +225,5 @@ pub(open) trait Tx : QueryExecutor {
 }
 
 pub(open) trait TxBeginner {
-  async fn begin_tx(Self, opts? : TxOptions) -> ConnTx raise TursoError
+  async fn begin_tx(Self, opts? : TxOptions) -> &Tx raise TursoError
 }
