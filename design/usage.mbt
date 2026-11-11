@@ -5,7 +5,7 @@
 // 目的就是让编译器验证「这些签名真的能写出调用代码」。
 
 ///|
-fn usage_open(path : String) -> Unit raise TursoError {
+async fn usage_open(path : String) -> Unit raise TursoError {
   let db = Database::open(path)
   defer db.close()
   let conn = db.connect()
@@ -64,7 +64,6 @@ async fn usage_execute(conn : Connection) -> Unit raise TursoError {
 async fn usage_tx(
   db : Database,
   conn : Connection,
-  pool : Pool,
 ) -> Unit raise TursoError {
   // 手动事务：MVCC 下用 BEGIN CONCURRENT 让多个写事务并行
   let tx = conn.begin_tx(opts=TxOptions::{
@@ -89,10 +88,10 @@ async fn usage_tx(
   db.set_journal_mode(JournalMode::Mvcc)
   ignore(db.default_tx_mode() == TxMode::Concurrent)
 
-  // 池上也能开事务（TxBeginner），或者用 begin_func 自动 commit/rollback
+  // 池上开事务：和 conn 返回同一个 DbTx，commit/rollback 时自动还连接
   ignore(
-    begin_func(pool, async fn(tx) -> Int raise TursoError {
-      ignore(tx.execute("insert into logs(msg) values ('pool')"))
+    begin_func(db, async fn(tx) -> Int raise TursoError {
+      ignore(tx.execute("insert into logs(msg) values ('db')"))
       0
     }),
   )
@@ -100,19 +99,19 @@ async fn usage_tx(
 
 ///|
 async fn usage_pool(db : Database) -> Unit raise TursoError {
-  let pool = Pool::new(db, config=PoolConfig::new(max_conns=4, min_idle=1))
-  defer pool.close()
-
-  // 隐式：query/execute 自动 acquire → 用完自动 release
-  let rows = pool.query("select 1")
+  // 隐式：db.query / db.execute 自动 acquire → 用完自动 release
+  let rows = db.query("select 1")
   defer rows.close()
+  ignore(db.execute("insert into t(x) values (1)"))
 
-  // 显式：借出来，自己决定什么时候还
-  let pc = pool.acquire()
-  ignore(pc.execute("insert into t(x) values (1)"))
-  println("total= \{pool.total()} idle= \{pool.idle()}")
-  println("acquire= \{pool.stats().acquire_count}")
-  pc.release()
+  // 显式：从池里取出，自己决定什么时候还；close = 还回池
+  let conn = db.connect()
+  defer conn.close()
+  ignore(conn.execute("insert into t(x) values (2)"))
+
+  // 观测
+  println("max_conns= \{db.max_conns()}")
+  println("acquire= \{db.stats().acquire_count}")
 }
 
 ///|

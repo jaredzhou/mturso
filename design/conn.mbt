@@ -1,37 +1,59 @@
-// 设计稿：句柄层（Database / Connection）与它的观测方法。
+// 设计稿：句柄层（Database = 连接池 / Connection = 一次 checkout）。
 
 ///|
-/// 一个 Turso 数据库（文件路径或 `":memory:"`）。
+/// 一个 Turso 数据库 = 一个连接池（ADR-0001）。
 ///
-/// 它是**连接工厂**：一个库可以开出多个 `Connection`；但它自己不实现
-/// `QueryExecutor` / `TxBeginner`（要跑 SQL 必须先开连接）。
+/// 它持有 idle / busy 连接；`max_conns` 是**线程预算**（一条连接 = 一个 C 侧
+/// worker）。它自己也实现 `QueryExecutor` / `TxBeginner`：`db.query(...)` /
+/// `db.begin_tx()` 是隐式 acquire/release。
 declare pub type Database
 
 ///|
-/// 一个连接：独立的语句/事务状态，并且**独占一个 C 侧工作线程**。
+/// 一次 checkout。独立的语句/事务状态，独占一个 C 侧工作线程。
 ///
-/// 实现里它会持有自己所属的 `Database`（结构体字段构成 GC 可达引用，
-/// 防止库先被回收、连接变成悬空句柄）。
+/// 实现里它持有自己所属的 `Database`（结构体字段构成 GC 可达引用，防止库先被
+/// 回收、连接变成悬空句柄）。
 declare pub type Connection
 
 ///|
-/// 打开数据库。
-declare pub fn Database::open(path : String) -> Database raise TursoError
+/// 打开数据库。`max_conns` 是池上限（默认 4）。
+declare pub fn Database::open(
+  path : String,
+  max_conns? : Int,
+) -> Database raise TursoError
 
 ///|
-/// 开一个连接。
-declare pub fn Database::connect(self : Database) -> Connection raise TursoError
+/// 从池里取一条连接。**async**：`max_conns` 满时会等待别人归还。
+declare pub async fn Database::connect(
+  self : Database,
+) -> Connection raise TursoError
 
 ///|
-/// 关闭数据库（之后不能再用它开连接）。
-///
-/// **级联**：先关掉本库开出的所有连接（join 掉各自的工作线程），再
-/// `turso_database_deinit`（见 ADR-0001）。签名是 `-> Unit`（不抛、幂等），
-/// 所以可以 `defer db.close()`。
+/// 关闭数据库（幂等）：**级联**关掉 idle 和 busy 里的所有连接（join 各自 worker），
+/// 再 `turso_database_deinit`。签名是 `-> Unit`（不抛），所以可以 `defer db.close()`。
 declare pub fn Database::close(self : Database) -> Unit
 
 ///|
-/// 连接是否已关闭（不抛：用来做幂等检查）。
+declare pub fn Database::is_closed(self : Database) -> Bool
+
+///|
+/// 池上限（线程预算）。
+declare pub fn Database::max_conns(self : Database) -> Int
+
+///|
+/// 池统计快照（定义在 pool.mbt）。
+declare pub fn Database::stats(self : Database) -> PoolStats
+
+///|
+// ---------------------------------------------------------------------------
+// Connection
+
+///|
+/// 关闭连接 = **还回池**（幂等；不是销毁）。
+declare pub fn Connection::close(self : Connection) -> Unit
+
+///|
+/// 连接是否已关闭（已还回池也算关闭）。
 declare pub fn Connection::is_closed(self : Connection) -> Bool
 
 ///|
@@ -41,13 +63,13 @@ declare pub fn Connection::last_insert_rowid(self : Connection) -> Int64
 ///|
 /// 引擎自报的版本串。注意这是**兼容性伪装**：它回答的是它兼容的 SQLite 版本
 /// （实测 `3.50.4`），不是 Turso 自己的版本号。
-declare pub fn Connection::sqlite_version(self : Connection) -> String
+declare pub async fn Connection::sqlite_version(
+  self : Connection,
+) -> String raise TursoError
 
 ///|
 // ---------------------------------------------------------------------------
-// 下面几个方法在实现里由 trait impl 提供（`pub impl QueryExecutor for Connection
-// with fn ...`，一份就够）。设计稿里 `declare pub impl` 不会带出方法，所以这里
-// 单独 declare 一遍，好让用法片段真的能调用它们。
+// trait impl 带出的方法（declare pub impl 不带出方法，这里单独声明一遍）。
 
 ///|
 declare pub async fn Connection::query(
@@ -77,19 +99,50 @@ declare pub async fn Connection::begin_tx(
 ) -> DbTx raise TursoError
 
 ///|
-declare pub fn Connection::close(self : Connection) -> Unit
-
-///|
 declare pub impl QueryExecutor for Connection
 
 ///|
 declare pub impl TxBeginner for Connection
 
 ///|
-/// `Closer` 的签名是 `fn close(Self) -> Unit`（不抛、幂等）：
-/// 确定性停掉并 join 掉工作线程；如果此刻正有一个语句在飞，会**等它跑完**
-/// （Turso 没有跨线程取消的 API，这是唯一安全策略）。
 declare pub impl Closer for Connection
+
+///|
+// ---------------------------------------------------------------------------
+// Database 作为池：隐式 acquire/release
+
+///|
+declare pub async fn Database::query(
+  self : Database,
+  sql : String,
+  params? : Array[&ToValue],
+) -> &Rows raise TursoError
+
+///|
+declare pub async fn Database::query_one(
+  self : Database,
+  sql : String,
+  params? : Array[&ToValue],
+) -> Row raise TursoError
+
+///|
+declare pub async fn Database::execute(
+  self : Database,
+  sql : String,
+  params? : Array[&ToValue],
+) -> ExecResult raise TursoError
+
+///|
+declare pub async fn Database::begin_tx(
+  self : Database,
+  opts? : TxOptions,
+) -> DbTx raise TursoError
+
+///|
+declare pub impl QueryExecutor for Database
+
+///|
+declare pub impl TxBeginner for Database
 
 ///|
 // ---------------------------------------------------------------------------
@@ -110,14 +163,10 @@ pub(all) enum JournalMode {
 /// 切到 `Mvcc` 还会打开 `.db-log` 并 bootstrap。同值再设是 no-op。所以尽量在
 /// `open` 时定一次，别频繁切。
 ///
-/// journal_mode 是**库/文件级**属性（两个连同一文件的连接看到的是同一个模式），
-/// 所以它挂在 `Database` 而不是 `Connection` 上 —— 否则每条连接各记一份默认值，
-/// 会跟库的真实状态漂移。
+/// journal_mode 是**库/文件级**属性，所以它挂在 `Database` 而不是 `Connection` 上。
 ///
 /// **联动**：设成 `Mvcc` 时把本库的默认事务模式设为 `TxMode::Concurrent`，
-/// `Wal` 则设回 `Deferred` —— 因为 MVCC 下普通 `BEGIN` 走 exclusive 路径、
-/// 并发写会 `Busy`，`BEGIN CONCURRENT` 才是 MVCC 该有的默认。之后再手动
-/// `set_default_tx_mode` 会覆盖它（后调用的赢）。
+/// `Wal` 则设回 `Deferred`。之后再手动 `set_default_tx_mode` 会覆盖它（后调用的赢）。
 declare pub fn Database::set_journal_mode(
   self : Database,
   mode : JournalMode,
@@ -125,7 +174,6 @@ declare pub fn Database::set_journal_mode(
 
 ///|
 /// 默认事务模式：`begin_tx` 在 `opts.mode == None` 时用它。库刚打开时是 `Deferred`。
-/// 由本库开出的所有连接共享。
 declare pub fn Database::set_default_tx_mode(
   self : Database,
   mode : TxMode,

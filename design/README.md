@@ -15,8 +15,8 @@ moon check --target native
 
 - [ADR-0001：把连接池并进 Database](../docs/adr/0001-database-is-the-pool.md) ——
   `Database` 即池（`db.close()` 级联关连接、`Database::open` 改 `async`、
-  `Connection::open` = `max_conns=1` 的私有库）。本目录的 `conn.mbt` / `pool.mbt`
-  仍是**合并前**的形状，落地时按该 ADR 调整。
+  `Connection::open` = `max_conns=1` 的私有库）。`conn.mbt` / `pool.mbt` 已按该
+  ADR 重写。
 
 ## 落地后的目录映射
 
@@ -27,8 +27,8 @@ moon check --target native
 | `design/traits.mbt` | 根包 | `Row`/`ExecResult`/`ToValue`/`FromValue`/`Rows`/`QueryExecutor`/`Closer`/`FromRow` |
 | `design/values.mbt` | 根包 | 上面这些 trait 的内置类型实例 + `Timestamp` |
 | `design/conn.mbt` | 根包 | `Database`、`Connection` |
-| `design/tx.mbt` | 根包 | `TxMode`/`TxOptions`/`Tx`/`TxBeginner`/`RetryOptions`/`begin_func`/`retry_tx` |
-| `design/pool.mbt` | 根包（并入 `Database`，见 ADR-0001） | `PoolConn`→`Connection`、`PoolConfig`→`Database` 的 `max_conns`、`PoolStats`/`PoolRows`/`PoolDbTx` 随 `Database` |
+| `design/tx.mbt` | 根包 | `TxMode`/`TxOptions`/`Tx`/`DbTx`/`TxBeginner`/`RetryOptions`/`begin_func`/`retry_tx` |
+| `design/pool.mbt` | 根包 | `PoolStats`（池已并入 `Database`，见 ADR-0001） |
 | `design/usage.mbt` | 示例 | 用法片段（搬进 `examples/` 与测试） |
 
 根包用 `pub using @value { type Value, type Column }` 转出子包的类型，所以用户
@@ -46,8 +46,9 @@ moon check --target native
 
 差异点（Turso 侧特有）：
 
-1. **一个库多个连接**：`Database::connect()` 可重复调用，每条连接有自己的
-   C 侧工作线程；`Database::close()` 在有活连接时会拒绝。
+1. **一个库多个连接**：`Database` 即连接池（`max_conns` 是线程预算）；
+   `db.connect()` 取一条（满了等待），`conn.close()` 还回池，`db.close()` 级联
+   关掉所有连接。
 2. **`BEGIN CONCURRENT`**：MVCC 并发写的入口，体现为 `TxMode::Concurrent`。
    冲突是 `TursoError::Conflict`（事务已被中止，必须整事务重开）。**联动**：
    `set_journal_mode(Mvcc)` 会把**库**的默认事务模式设成 `Concurrent`
@@ -105,6 +106,6 @@ composite（`STRUCT` / `UNION`）与数组类型（`INTEGER[]`）是 Turso 扩�
 2. C 侧从「TSV 文本」换成**类型化缓冲**，做出 `Rows` / `Row` 的物化版本。
 3. traits 落地：把现有 async `query`/`exec` 改造成 `execute -> ExecResult` /
    `query -> &Rows`。
-4. `Pool` + `retry_tx` / `retry_stmt`。
+4. `Database` 即池 + `retry_tx`。
 
 每一步都跑 `moon test --target native` 保持现有 6 个测试绿。
