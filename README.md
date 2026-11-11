@@ -22,15 +22,51 @@ async fn main {
 
 ## Features
 
-- **Typed queries** — read a column as `Int`, `Int64`, `Double`, `String`, `Bytes`, `Json`, `Timestamp`, an `Option`, a tuple, or your own `FromRow` type. `NULL` and `BLOB` stay distinct — nothing is rendered to text.
-- **Parameter binding** — write `?1`, `?2`, … and pass `params=[...]`. No string concatenation.
-- **One-line result mapping** — `fetch` collects rows into `Array[T]`; `fetch_one` returns exactly one row, or raises `NoRows`.
-- **Transactions** — `begin_tx` / `commit` / `rollback`, with `Deferred`, `Immediate`, `Exclusive`, and Turso's `Concurrent` (`BEGIN CONCURRENT`). `begin_func` commits on success and rolls back on error.
-- **Automatic retries** — `retry_tx` reruns a whole transaction on `Busy` or `Conflict`, with full-jitter backoff and an attempts/time budget.
-- **Built-in connection pool** — `max_conns` caps how many connections (and C-side worker threads) run at once. `db.query` / `db.execute` borrow and return connections for you; `db.connect()` checks one out explicitly; `db.stats()` reports contention.
-- **Non-blocking async API** — awaiting a slow statement leaves the event loop free to run other tasks.
-- **Deterministic shutdown** — `close()` joins the worker; `db.close()` closes every pooled connection and then the database.
-- **Self-contained** — the Turso engine ships in `libs/`; no separate install.
+### Queries
+
+`QueryExecutor` is the entry point (`Connection`, `Database`, and `DbTx` implement it):
+
+- `query(sql, params?) -> &Rows` — typed, streaming rows; `Rows` exposes `has_next` / `get_row` / `columns` / `close`.
+- `query_one(sql, params?) -> Row` — the first row, or `NoRows`.
+- `execute(sql, params?) -> ExecResult` — affected rows.
+- `fetch / fetch_one` — collect rows into `Array[T]` / `T` via `FromRow`.
+
+### Values
+
+- `Value`: `Null | Integer(Int64) | Real(Double) | Text(String) | Blob(Bytes)`.
+- `Column { name, decltype }`.
+- `ToValue` / `FromValue` / `FromRow`, implemented for `Bool`, all integer widths, `Float` / `Double`, `String`, `Bytes`, `Char`, `Unit`, `Ref`, `Option`, `Json`, `Array` / `Map` (JSON text), `Timestamp`, and tuples up to 5.
+- `Row::get[T]` maps through `FromValue`; `Row::value_raw(i)` gives the exact bytes.
+
+### Connection pool
+
+- `Database` **is** the pool: `max_conns`, `connect()` (**async**; waits at the cap), `stats()`, `max_conns()`, `is_closed()`.
+- `Database` implements `QueryExecutor` / `TxBeginner`, so `db.query(...)` / `db.execute(...)` / `db.begin_tx()` acquire and release implicitly.
+- `Connection` is one checkout; `Connection::close()` returns it to the pool (idempotent).
+- `Database::close()` cascades: every connection is closed, then the database is deinited.
+
+### Transactions
+
+- `TxBeginner::begin_tx(opts?) -> DbTx`; `Tx` is just `commit` / `rollback`.
+- `TxMode`: `Deferred` / `Immediate` / `Exclusive` / `Concurrent` (`BEGIN CONCURRENT`).
+- `DbTx` is one concrete type for both `Connection` and `Database` (it is also a `QueryExecutor`); a pooled `DbTx` returns its connection on commit/rollback.
+- `begin_func` commits on success and rolls back on error.
+
+### Async concurrency
+
+- Each `Connection` owns a C-side worker thread; `query` / `execute` await without blocking the MoonBit event loop.
+- `max_conns` bounds the number of worker threads; extra `connect()` callers wait.
+- `Connection::close()` joins its worker; `Database::close()` cascades to all of them.
+
+### Retries
+
+- `retry_tx` reruns the **whole transaction** on `Busy` or `Conflict`, using full-jitter exponential backoff with an attempts/time budget.
+- `RetryOptions { attempts, base_delay_ms, max_delay_ms, budget_ms? }`.
+
+### Errors
+
+- `TursoError`: `ConnectionError` / `QueryError` / `NoRows` / `Busy` / `Conflict`.
+- `ValueError`: a value could not be decoded as the requested type.
 
 ## Platform support
 
