@@ -116,3 +116,35 @@ pub async fn[T : FromRow] &QueryExecutor::fetch_one(
   rows.close()
   raise TursoError::NoRows
 }
+
+///|
+/// 能按 `FromRow` 把 SELECT 结果收成 `T` 的类型。
+///
+/// `fetch` / `fetch_one` 对 `T` 泛型，不能放进 `QueryExecutor`（那会让 trait
+/// 不能当对象用，而 `&QueryExecutor` / `&Tx` 是 API 的一部分）。所以它们住在
+/// 这个单独的非 object-safe trait 里，共享一份默认实现。
+pub(open) trait Fetching: QueryExecutor {
+  async fn[T : FromRow] fetch(Self, String, params? : Array[&ToValue]) -> Array[
+    T,
+  ] raise TursoError = _
+  async fn[T : FromRow] fetch_one(Self, String, params? : Array[&ToValue]) -> T raise TursoError = _
+}
+
+///|
+/// `Fetching` 的共享默认实现：转发到 `&QueryExecutor::fetch` / `fetch_one`。
+impl Fetching with fn[T : FromRow] fetch(
+  self,
+  sql : String,
+  params? : Array[&ToValue],
+) -> Array[T] {
+  &QueryExecutor::fetch(self, sql, params?)
+}
+
+///|
+impl Fetching with fn[T : FromRow] fetch_one(
+  self,
+  sql : String,
+  params? : Array[&ToValue],
+) -> T {
+  &QueryExecutor::fetch_one(self, sql, params?)
+}

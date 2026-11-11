@@ -233,10 +233,7 @@ async test "参数绑定：单个 / 多个 / NULL，结果与字面量一致" {
 ///|
 ///|
 async fn fetch_one_absent(conn : @mturso.Connection) -> Unit raise @mturso.TursoError {
-  let _row : (Int, String) = &QueryExecutor::fetch_one(
-    conn,
-    "select id, name from t where id = 99",
-  )
+  let _row : (Int, String) = conn.fetch_one("select id, name from t where id = 99")
 }
 
 ///|
@@ -248,17 +245,13 @@ async test "fetch / fetch_one：元组建行 + NoRows" {
   ignore(conn.exec_blocking("create table t(id integer, name text)"))
   ignore(conn.exec_blocking("insert into t values (1, 'a'), (2, 'b')"))
 
-  let all : Array[(Int, String)] = &QueryExecutor::fetch(
-    conn,
-    "select id, name from t order by id",
-  )
+  let all : Array[(Int, String)] = conn.fetch("select id, name from t order by id")
   assert_true(all.length() == 2)
   assert_true(all[0].0 == 1)
   assert_true(all[0].1 == "a")
   assert_true(all[1].0 == 2)
 
-  let one : (Int, String) = &QueryExecutor::fetch_one(
-    conn,
+  let one : (Int, String) = conn.fetch_one(
     "select id, name from t where id = ?1",
     params=[2],
   )

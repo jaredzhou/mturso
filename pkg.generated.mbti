@@ -34,9 +34,12 @@ pub fn Connection::close(Self) -> Unit
 pub fn Connection::exec_blocking(Self, String) -> Int64 raise TursoError
 pub fn Connection::exec_params(Self, String, params? : Array[&ToValue]) -> Int64 raise TursoError
 pub async fn Connection::execute(Self, String, params? : Array[&ToValue]) -> ExecResult raise TursoError
+pub async fn[T : FromRow] Connection::fetch(Self, String, params? : Array[&ToValue]) -> Array[T] raise TursoError
+pub async fn[T : FromRow] Connection::fetch_one(Self, String, params? : Array[&ToValue]) -> T raise TursoError
 pub async fn Connection::query(Self, String, params? : Array[&ToValue]) -> &Rows raise TursoError
 pub async fn Connection::query_one(Self, String, params? : Array[&ToValue]) -> Row raise TursoError
 pub impl Closer for Connection
+pub impl Fetching for Connection
 pub impl QueryExecutor for Connection
 
 pub struct Database {
@@ -91,6 +94,11 @@ pub using @value {type Value}
 // Traits
 pub(open) trait Closer {
   fn close(Self) -> Unit
+}
+
+pub(open) trait Fetching : QueryExecutor {
+  async fn[T : FromRow] fetch(Self, String, params? : Array[&ToValue]) -> Array[T] raise TursoError = _
+  async fn[T : FromRow] fetch_one(Self, String, params? : Array[&ToValue]) -> T raise TursoError = _
 }
 
 pub(open) trait FromRow {

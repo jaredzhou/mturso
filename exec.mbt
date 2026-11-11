@@ -39,3 +39,9 @@ pub impl QueryExecutor for Connection with execute(
 pub impl Closer for Connection with close(self) {
   @ffi.conn_close(self.raw)
 }
+
+///|
+pub impl Fetching for Connection
+
+///|
+pub extend Connection with Fetching::{fetch, fetch_one}
