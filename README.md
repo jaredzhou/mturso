@@ -6,24 +6,29 @@ MoonBit bindings for [Turso](https://turso.tech) — the Rust rewrite of SQLite 
 ![turso](https://img.shields.io/badge/turso-0.8.2-informational)
 ![license](https://img.shields.io/badge/license-Apache--2.0-green)
 
-`Database` is a connection factory; `Connection` runs SQL. Queries are **async**: on the native target every connection owns a dedicated **C-side worker thread**, so statements run there and the MoonBit event loop never blocks. (The wasm backend keeps the same async API, but the engine — and therefore the threads — live in the host; see Platform support.)
+`Database` is a database **and its connection pool**; `Connection` is one checkout from that pool. Queries are typed and **streaming**: results arrive as tagged frames over a pipe, and `Rows` pulls them one at a time — nothing is materialised up front. On native, every connection owns a dedicated C-side worker thread, so statements never block the MoonBit event loop.
 
 ```moonbit
-let db = @mturso.Database::open(":memory:")
-let conn = db.connect()
-ignore(conn.exec("create table t(id integer primary key, name text)"))
-ignore(conn.exec("insert into t(name) values ('alice'), ('bob')"))
-println(conn.query("select id, name from t order by id"))   // 1\talice\n2\tbob
-conn.close()
-db.close()
+async fn main {
+  let db = @mturso.Database::open(":memory:")
+  ignore(db.execute("create table t(id integer primary key, name text)"))
+  ignore(db.execute("insert into t(name) values ('alice'), ('bob')"))
+
+  let users : Array[(Int, String)] = db.fetch("select id, name from t order by id")
+  println(users)   // [(1, "alice"), (2, "bob")]
+  db.close()
+}
 ```
 
 ## Features
 
-- **One database, many connections** — call `db.connect()` as often as you like; each connection has its own statement/transaction state and its own worker thread.
-- **Queries don't block the event loop (native)** — blocking happens on the connection's own worker thread; a doorbell pipe wakes the awaiting task when the statement finishes. One worker thread per connection is a native-backend implementation detail, not part of the API contract.
-- **SQLite-compatible** — `select sqlite_version()` reports `3.50.4`; DDL/DML and `begin`/`commit`/`rollback` work as you would expect.
-- **Blocking API available** — `query_blocking` / `exec_blocking` run on the calling thread, no async runtime required.
+- **Typed values, not text** — `INTEGER` / `REAL` / `TEXT` / `BLOB` / `NULL` are decoded into `Value`, and `Row::get[T]` maps them through `FromValue`.
+- **Positional parameters** — `params=[...]` bind `?1`; the encoding happens in MoonBit, C only calls `bind_positional_*`.
+- **Streaming pull rows** — `query` returns a `Rows` reader: `has_next()` pulls one frame, `get_row()` hands it over. `fetch` / `fetch_one` are the typed shortcuts.
+- **Transactions** — `begin_tx` gives a concrete `DbTx` (`BEGIN [DEFERRED|IMMEDIATE|EXCLUSIVE|CONCURRENT]`), plus `begin_func` for auto commit/rollback.
+- **Retries** — `retry_tx` retries `Busy` / `Conflict` with full-jitter exponential backoff.
+- **Connection pool built in** — `db.query(...)` / `db.execute(...)` acquire and release implicitly; `db.connect()` takes one explicitly; `max_conns` is a hard budget and extra callers wait.
+- **Deterministic close** — `close()` joins worker threads; `db.close()` cascades to every pooled connection.
 - **Engine included** — the Turso shared library ships with the repo (`libs/`, ~20 MB); no separate engine install.
 
 ## Platform support
@@ -31,23 +36,16 @@ db.close()
 | Platform / target | Status | Notes |
 | --- | --- | --- |
 | **Linux x86_64** | ✅ tested | `moon test --target native` green; CI runs it on every push and PR |
-| **Linux aarch64** | ✅ tested | CI runs the suite on `ubuntu-24.04-arm` and fetches the `linux_arm64` engine binary (6/6 green) |
-| **macOS arm64** | ✅ tested | CI runs the suite on `macos-latest`; the fetch script also fixes the dylib's `install_name` so the rpath resolves |
-| **Windows x64** | 🚧 planned | Turso ships a `.dll` (MSVC) but only as a DLL — no import library — so the binding has to load it at runtime, and the C stub needs Win32 threads/events. Tracked in [#11](https://github.com/jaredzhou/mturso/issues/11) |
-| **WebAssembly / edge** | 🚧 planned | Feasible and prototyped: moonbit compiles the library *and your app* to `wasm`, with a small host shim bridging to Turso's own wasm build. Tracked in [#10](https://github.com/jaredzhou/mturso/issues/10) |
+| **Linux aarch64** | ✅ tested | CI runs the suite on `ubuntu-24.04-arm` |
+| **macOS arm64** | ✅ tested | CI runs the suite on `macos-latest` |
+| **Windows x64** | 🚧 planned | Turso ships only a DLL (no import library), so the engine must be loaded at run time; the C stub also needs Win32 threads. Tracked in [#11](https://github.com/jaredzhou/mturso/issues/11) |
+| **WebAssembly / edge** | 🚧 planned | Prototyped: the MoonBit module plus a host shim over Turso's wasm build. Tracked in [#10](https://github.com/jaredzhou/mturso/issues/10) |
 
-Two combinations are deliberately absent from the table: **macOS x86_64** (MoonBit ships no `darwin-x86_64` toolchain — the installer rejects `Darwin x86_64` and the artifact is a 404 — so the binding cannot be built for Intel Macs at all) and **Windows arm64** (the engine's platform-libs package ships a 0-byte placeholder DLL there).
-
-What "wasm" means concretely (measured in the spike, branch `spike/wasm-browser`): your MoonBit program imports the
-binding, the binding imports a handful of host functions (`exec` / `result_len` / `result_copy` / `log`), and the host
-implements them on top of Turso — in the browser through `@tursodatabase/database-wasm`, on the server/embedded side
-through `wasmtime` plus Turso's C ABI. The same wasm module ran unchanged under Node (two flavours) and wasmtime.
-On wasm the "one worker thread per connection" property does not hold: the MoonBit program runs on a single thread and
-the host owns the engine (and its threads). The cross-target contract is the async query API, not that implementation.
+macOS x86_64 is deliberately absent (MoonBit ships no `darwin-x86_64` toolchain), as is Windows arm64 (the engine's platform-libs package ships a 0-byte placeholder DLL).
 
 ## Installation
 
-Not on mooncakes yet, so consume it from source through a **workspace** (this flow is verified end to end):
+Not on mooncakes yet, so consume it from source through a **workspace**:
 
 ```bash
 git clone git@github.com:jaredzhou/mturso.git
@@ -81,135 +79,142 @@ options(
 )
 ```
 
-> Why you have to write that yourself: MoonBit does not propagate `cc-link-flags` from a dependency's `moon.pkg` to the downstream link, and the link happens in **your** root package. This repo's own `moon.pkg` / `ffi/moon.pkg` already carry the same flags, which is why `moon test` works out of the box; consumers need their own copy (replace `/path/to/mturso` with the real path).
+> MoonBit does not propagate `cc-link-flags` from a dependency to the downstream link, and the link happens in **your** root package. This repo's own `moon.pkg` / `ffi/moon.pkg` already carry the same flags, which is why `moon test` works out of the box.
 
 ## Quickstart
 
-Async (recommended — queries never block the event loop):
-
 ```moonbit
 async fn main {
-  let db = @mturso.Database::open(":memory:")     // or a file path: "./demo.db"
+  let db = @mturso.Database::open(":memory:")     // or a file path
+  defer db.close()
+
+  ignore(db.execute("create table t(id integer primary key, name text)"))
+
+  // Explicit checkout. `close()` returns the connection to the pool.
   let conn = db.connect()
+  defer conn.close()
 
-  ignore(conn.exec("create table t(id integer primary key, name text)"))
-  ignore(conn.exec("insert into t(name) values ('alice'), ('bob')"))
+  ignore(conn.execute(
+    "insert into t(name) values (?1), (?2)",
+    params=["alice", "bob"],
+  ))
 
-  println(conn.query("select id, name from t order by id"))
-  // 1	alice
-  // 2	bob
-
-  conn.close()
-  db.close()
-}
-```
-
-No async runtime needed:
-
-```moonbit
-fn main raise @mturso.TursoError {
-  let db = @mturso.Database::open(":memory:")
-  let conn = db.connect()
-  ignore(conn.exec_blocking("create table t(x integer)"))
-  ignore(conn.exec_blocking("insert into t values (1), (2)"))
-  println(conn.query_blocking("select sum(x) from t"))   // 3
-  conn.close()
-  db.close()
+  // Pull rows one at a time.
+  let rows = conn.query("select id, name from t order by id")
+  defer rows.close()
+  while rows.has_next() {
+    let row = rows.get_row()
+    let id : Int = row.get(0)
+    let name : String = row.get(1)
+    println("\{id}: \{name}")
+  }
 }
 ```
 
 ## Usage
 
-### One database, many connections
-
-Connections on the same database see each other's committed work:
+### Typed collection with `fetch` / `fetch_one`
 
 ```moonbit
-async fn demo() -> Unit raise @mturso.TursoError {
-  let db = @mturso.Database::open(":memory:")
-  let c1 = db.connect()
-  let c2 = db.connect()
-
-  ignore(c1.exec("create table t(id integer primary key, v integer)"))
-  ignore(c1.exec("insert into t(v) values (1), (2)"))
-
-  println(c2.query("select count(*) from t"))   // 2 — same database, other connection
-  ignore(c2.exec("insert into t(v) values (3)"))
-  println(c1.query("select count(*) from t"))   // 3
-
-  c1.close()
-  c2.close()
-  db.close()
+async fn demo(db : @mturso.Database) -> Unit raise @mturso.TursoError {
+  let users : Array[(Int, String)] = db.fetch("select id, name from t order by id")
+  let one : (Int, String) = db.fetch_one(
+    "select id, name from t where id = ?1",
+    params=[1],
+  )
+  println("\{users.length()} users, first = \{one.0}")
 }
 ```
 
-### Concurrency: a slow query doesn't block another connection
+`fetch_one` raises `TursoError::NoRows` when the query returns nothing. Both helpers close the reader for you.
 
-One worker thread per connection, so a 2-second query on one connection leaves the other connection free:
+### Values, `NULL` and raw bytes
 
-```moonbit
-async fn demo() -> Unit raise @mturso.TursoError {
-  let db = @mturso.Database::open(":memory:")
-  let slow = db.connect()
-  let fast = db.connect()
-  let fast_ms : Ref[Int64] = { val: 0L, }
-
-  @async.with_task_group(group => {
-    group.spawn_bg(() => {
-      ignore(slow.query("select turso_sleep(2000)"))   // sleeps 2s on its own thread
-    })
-    @async.sleep(100)                                  // let the slow query start
-    let t = @async.now()
-    ignore(fast.query("select 6 * 7"))
-    fast_ms.val = @async.now() - t
-  })
-
-  println("fast query took \{fast_ms.val}ms (slow one still running)")   // measured: 1ms
-  slow.close()
-  fast.close()
-  db.close()
-}
-```
-
-`turso_sleep(ms)` is a diagnostic scalar function the binding registers on every connection (not an engine builtin): it sleeps on **the thread executing that statement**, which makes it easy to stage a slow query from SQL.
+`Value` has five variants (`Null`, `Integer`, `Real`, `Text`, `Blob`). `Row::value(i)` returns the `Value`; `Row::value_raw(i)` returns the raw bytes (useful for exact `BLOB`/UTF-8 data). MoonBit `String` is UTF-16, while the wire format is UTF-8: conversion happens at the boundary, and invalid UTF-8 is decoded lossily (`U+FFFD`).
 
 ### Transactions
 
-A transaction is ordinary SQL pinned to one connection; other connections never see rolled-back work:
+```moonbit
+async fn demo(db : @mturso.Database) -> Unit raise @mturso.TursoError {
+  let conn = db.connect()
+  defer conn.close()
+
+  let tx = conn.begin_tx()                 // BEGIN (Deferred)
+  ignore(tx.execute("insert into t(name) values ('carol')"))
+  tx.commit()
+
+  // Pooled transaction: the connection returns to the pool on commit/rollback.
+  let tx2 = db.begin_tx(opts=@mturso.TxOptions::{
+    mode: Some(@mturso.TxMode::Concurrent),  // BEGIN CONCURRENT (MVCC only)
+    read_only: None,
+  })
+  ignore(tx2.execute("insert into t(name) values ('dave')"))
+  tx2.rollback()
+}
+```
+
+`begin_func` wraps a whole transaction and commits on success / rolls back on error:
+
+```moonbit
+async fn insert_many(db : @mturso.Database) -> Unit raise @mturso.TursoError {
+  ignore(@mturso.begin_func(db, async fn(tx) -> Int raise @mturso.TursoError {
+    ignore(tx.execute("insert into t(name) values ('eve')"))
+    0
+  }))
+}
+```
+
+### Retries
+
+`retry_tx` retries the **whole transaction** on `Busy` (WAL write lock) or `Conflict` (MVCC write-write conflict), with full-jitter backoff. The closure may run more than once — keep it idempotent.
+
+```moonbit
+async fn bump(conn : @mturso.Connection) -> Unit raise @mturso.TursoError {
+  ignore(@mturso.retry_tx(
+    conn,
+    async fn(tx) -> Int raise @mturso.TursoError {
+      ignore(tx.execute("update t set v = v + 1 where id = 1"))
+      0
+    },
+    opts=@mturso.RetryOptions::{
+      attempts: 10,
+      base_delay_ms: 1,
+      max_delay_ms: 50,
+      budget_ms: None,
+    },
+  ))
+}
+```
+
+### The pool
 
 ```moonbit
 async fn demo() -> Unit raise @mturso.TursoError {
-  let db = @mturso.Database::open(":memory:")
-  let c1 = db.connect()
-  let c2 = db.connect()
-  ignore(c1.exec("create table t(id integer primary key, v integer)"))
+  let db = @mturso.Database::open("./app.db", max_conns=4)
+  defer db.close()
 
-  ignore(c1.exec("begin"))
-  ignore(c1.exec("insert into t(v) values (1)"))
-  ignore(c1.exec("commit"))
-  println(c2.query("select count(*) from t"))   // 1
+  ignore(db.execute("create table t(x integer)"))   // implicit acquire/release
+  let rows = db.query("select x from t")             // released when `rows.close()`
+  defer rows.close()
 
-  ignore(c1.exec("begin"))
-  ignore(c1.exec("insert into t(v) values (2)"))
-  ignore(c1.exec("rollback"))
-  println(c2.query("select count(*) from t"))   // 1
+  let conn = db.connect()                            // explicit checkout (waits at max_conns)
+  defer conn.close()                                 // return to the pool
 
-  c1.close()
-  c2.close()
-  db.close()
+  let st = db.stats()
+  println("max=\{(db.max_conns())} acquires=\{st.acquire_count} waits=\{st.acquire_wait_count}")
 }
 ```
 
 ### Error handling
 
-Every database error surfaces as `@mturso.TursoError`, carrying the engine's message:
-
 ```moonbit
 async fn demo(conn : @mturso.Connection) -> Unit raise @mturso.TursoError {
-  try {
-    ignore(conn.query("select * from no_such_table"))
-  } catch {
-    @mturso.TursoError(msg) => println("turso: \{msg}")
+  ignore(conn.query("select * from no_such_table")) catch {
+    @mturso.TursoError::QueryError(msg) => println("query failed: \{msg}")
+    @mturso.TursoError::ConnectionError(msg) => println("connection: \{msg}")
+    @mturso.TursoError::Busy(msg) => println("busy: \{msg}")
+    @mturso.TursoError::Conflict(msg) => println("conflict: \{msg}")
+    @mturso.TursoError::NoRows => println("no rows")
   }
 }
 ```
@@ -218,38 +223,44 @@ async fn demo(conn : @mturso.Connection) -> Unit raise @mturso.TursoError {
 
 | API | Description |
 | --- | --- |
-| `Database::open(path)` | Open a file database, or `":memory:"` |
-| `Database::connect()` | Open a connection (one C-side worker thread each) |
-| `Database::close()` | Close the database (idempotent) |
-| `Connection::query(sql)` | **async**; run a single query, returns tab-separated text |
-| `Connection::exec(sql)` | **async**; run DDL/DML, returns affected rows (`Int64`) |
-| `Connection::query_blocking(sql)` / `exec_blocking(sql)` | Synchronous variants, no async runtime |
-| `Connection::close()` | Close the connection and reclaim its worker thread (idempotent) |
-| `TursoError` | The single error type; the engine message comes out of `catch` |
+| `Database::open(path, max_conns?)` | Open a database (file or `":memory:"`); `max_conns` defaults to 4 |
+| `Database::connect()` | **async**; take a connection from the pool (waits at `max_conns`) |
+| `Database::query/query_one/execute` | Implicit acquire → run → release |
+| `Database::begin_tx(opts?)` | Pooled transaction (`DbTx`, released on commit/rollback) |
+| `Database::stats()/max_conns()/is_closed()` | Pool observability |
+| `Database::close()` | Idempotent; cascades to every connection, then deinits |
+| `Connection::query/query_one/execute` | **async**; typed, streaming rows / `ExecResult` |
+| `Connection::fetch/fetch_one` | Typed collection via `FromRow` |
+| `Connection::begin_tx(opts?)` | `DbTx` |
+| `Connection::close()` | Return the connection to the pool (idempotent) |
+| `Connection::last_insert_rowid()/sqlite_version()/is_closed()` | Observability |
+| `DbTx::query/query_one/execute` | Run inside the transaction |
+| `DbTx::commit()/rollback()` | Finish (once) |
+| `TursoError` | `ConnectionError` / `QueryError` / `NoRows` / `Busy` / `Conflict` |
 
 ## Known limitations
 
-- **No parameter binding yet** — values must be written into SQL as literals; positional `params?` lands in the next version.
-- **Results are still text** — `query` returns a tab-separated string, with `NULL` rendered as `NULL` and `BLOB` as `<blob>`; there is no typed accessor yet.
+- **Single-statement `execute`** — `query` rejects multi-statement SQL explicitly; the multi-statement `execute` loop is not enabled yet (it currently trips an engine abort).
 - **No cancellation or timeouts** — once submitted, a statement runs to completion (Turso's C ABI has no cross-thread cancel).
-- **Native target today** — it links a C shared library, so the published package is native-only; Windows and wasm are planned (see Platform support above).
+- **Native target today** — the binding links a C shared library; Windows and wasm are planned.
 - **Preview engine** — Turso 0.8.2 is a preview release with many features behind experimental flags; don't treat it as production SQLite.
 
 ## Roadmap
 
-Typed values (`Value` / `Column`), parameter binding, materialized row sets (`Rows` / `Row`), real transaction objects (`Tx` / `begin_tx`, including `BEGIN CONCURRENT`), retry helpers (`retry_tx` / `retry_stmt`) and a connection pool (`Pool`) are already written as a compiler-checked design spec (`design/`, `moon check` clean). They land in this order: value subpackage → typed C-side buffering → traits → pool + retry, shaped to match [`jaredzhou/moonpg`](https://github.com/jaredzhou/moonpg).
-
-On the platform side: Windows x64 ([#11](https://github.com/jaredzhou/mturso/issues/11)) and WebAssembly / edge ([#10](https://github.com/jaredzhou/mturso/issues/10)) are the two open tracks; both wait on run-time loading of the engine library, and the wasm spike already proved the shape end to end.
+- **#9** — load the engine at run time so consumers don't need to copy link flags.
+- **#10** — WebAssembly / edge spike.
+- **#11** — Windows x64 (MSVC).
 
 ## Development
 
 ```bash
 moon check --target native      # type check
-moon test  --target native      # run the test suite (6 tests)
-moon fmt && moon info           # format + regenerate pkg.generated.mbti
+moon test  --target native      # run the test suite (27 tests)
 ```
 
-The Turso shared library is vendored in `libs/` (with a `.sha256`), and both `moon.pkg` and `ffi/moon.pkg` point `-L`/rpath at it, so tests need no `LD_LIBRARY_PATH`. On a new machine or after moving the repo, run:
+Do not run a bare `moon fmt` over the sources: this toolchain respells `Int` to `Int32`. If you do, revert with `sed -i 's/Int32/Int/g'` on the touched files.
+
+The Turso shared library is vendored in `libs/` (with a `.sha256`), and both `moon.pkg` and `ffi/moon.pkg` point `-L`/rpath at it, so tests need no `LD_LIBRARY_PATH`. On a new machine or after moving the repo:
 
 ```bash
 bash scripts/fetch-turso-lib.sh   # copies the library + rewrites both link paths
@@ -259,12 +270,17 @@ Layout:
 
 | Path | Contents |
 | --- | --- |
-| `mturso.mbt` | Public API: `Database`, `Connection`, `TursoError` |
-| `ffi/` | FFI layer: `extern "c"` declarations + C stub (per-connection worker thread, doorbell pipe) + vendored `turso.h` |
-| `design/` | Design spec for the next version (`declare` declarations plus usage snippets; `moon check` clean) |
+| `mturso.mbt` | `Database` (pool) and `Connection` |
+| `value/` | `Value`, `Column` |
+| `traits.mbt` / `values.mbt` | value traits, `Row`, `QueryExecutor`, built-in impls |
+| `rows.mbt` | streaming `Rows` reader + frame parsing |
+| `tx.mbt` / `retry.mbt` | transactions and retry helpers |
+| `pool.mbt` | `PoolStats` + `Database`'s pool-side impls |
+| `ffi/` | `extern "c"` declarations + thin C stub + vendored `turso.h` |
+| `design/` | Compiler-checked design spec (`moon check` clean) |
 | `libs/` | The Turso C shared library |
-| `notes/` | Research notes on the Turso engine (source walkthrough, Go SDK measurements, binding-dev reference) — unrelated to the library API |
-| `examples/` | Go SDK examples and a C ABI worker-thread skeleton (research) |
+| `notes/` | Research notes on the Turso engine |
+| `examples/` | Go SDK examples and a C ABI worker skeleton |
 
 ## License
 
