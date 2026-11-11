@@ -24,7 +24,7 @@ async fn main {
 
 ## Features
 
-- **One typed, streaming query pipeline** — `query`, `query_one`, and `execute` share the same prepared-statement execution path, but expose only the result shape each caller needs: `query` pulls rows incrementally, `query_one` reads the first `Row`, and `execute` drains the result into `ExecResult`. Values arrive as typed frames and decode through `FromValue` — no rendered text or upfront full-result materialization.
+- **Query APIs with explicit result shapes** — `query` returns a pull-based `Rows` reader for row-by-row iteration; `query_one` returns exactly one `Row` (or `NoRows`); both expose columns through the `FromValue` decoding contract. `execute` is the DDL/DML entry point and returns `ExecResult` with affected rows. The call site always says whether you want rows, one row, or only execution status.
 - **Bind values safely with `ToValue`** — pass `params=[...]` and let `ToValue` encode integers, floats, strings, blobs, options, JSON, timestamps and tuples; `FromValue` / `FromRow` decode them back. No SQL string building.
 - **Built-in connection pool** — `Database` is the pool: `max_conns` caps concurrency, `db.query` / `db.execute` borrow a connection automatically, `db.connect()` checks one out explicitly, and `db.stats()` shows contention.
 - **First-class transactions** — `begin_tx` / `commit` / `rollback`, with `Deferred`, `Immediate`, `Exclusive`, and Turso's `BEGIN CONCURRENT`; `begin_func` commits on success and rolls back on error.
