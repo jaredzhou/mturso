@@ -13,6 +13,8 @@ import {
 // Values
 pub async fn[T, B : TxBeginner] begin_func(B, async (DbTx) -> T raise TursoError) -> T raise TursoError
 
+pub async fn[T, B : TxBeginner] retry_tx(B, async (DbTx) -> T raise TursoError, opts? : RetryOptions) -> T raise TursoError
+
 // Errors
 pub suberror TursoError {
   ConnectionError(String)
@@ -87,6 +89,14 @@ pub fn ResultRows::columns(Self) -> Array[@value.Column]
 pub fn ResultRows::get_row(Self) -> Row raise TursoError
 pub async fn ResultRows::has_next(Self) -> Bool raise TursoError
 pub impl Rows for ResultRows
+
+pub(all) struct RetryOptions {
+  attempts : Int
+  base_delay_ms : Int
+  max_delay_ms : Int
+  budget_ms : Int?
+} derive(Eq, @debug.Debug)
+pub fn RetryOptions::default() -> Self
 
 pub struct Row {
   values : Array[@value.Value]

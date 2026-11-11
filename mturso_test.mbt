@@ -308,7 +308,6 @@ async fn insert3(tx : @mturso.DbTx) -> Int raise @mturso.TursoError {
   0
 }
 
-///|
 async test "事务：commit / rollback / begin_func / 重复 commit" {
   let db = @mturso.Database::open(":memory:")
   defer db.close()

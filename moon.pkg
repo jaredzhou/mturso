@@ -1,9 +1,11 @@
 import {
   "jaredzhou/mturso/ffi",
   "jaredzhou/mturso/value",
+  "moonbitlang/async",
   "moonbitlang/async/raw_fd",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/json",
+  "moonbitlang/core/random",
 }
 
 import {
