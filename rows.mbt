@@ -18,6 +18,7 @@ pub struct ResultRows {
   columns : Array[@value.Column]
   stmt : @ffi.Stmt
   conn : @ffi.Conn
+  release : Connection?
   pending : Ref[Array[@value.Value]?]
   changes : Ref[Int64]
   done : Ref[Bool]
@@ -78,6 +79,11 @@ pub impl Rows for ResultRows with close(self) {
     self.stream.close()
     // 等 worker 真的停了，之后 stmt 才能安全释放
     @ffi.conn_wait_job(self.conn)
+    // 池上发起的查询：读完把连接还回池
+    match self.release {
+      Some(c) => c.close()
+      None => ()
+    }
   }
 }
 
@@ -203,6 +209,7 @@ async fn Connection::open_rows(
   self : Connection,
   sql : String,
   params? : Array[&ToValue],
+  release? : Connection,
 ) -> ResultRows raise TursoError {
   self.ensure_open()
   let encoded = @utf8.encode(sql)
@@ -249,6 +256,7 @@ async fn Connection::open_rows(
     columns: parse_columns(payload),
     stmt,
     conn: self.raw,
+    release,
     pending: Ref(None),
     changes: Ref(0L),
     done: Ref(false),

@@ -349,6 +349,30 @@ async test "事务：commit / rollback / begin_func / 重复 commit" {
 }
 
 ///|
+async test "#7 池上隐式 acquire/release + 池事务 + 统计" {
+  let db = @mturso.Database::open(":memory:", max_conns=2)
+  defer db.close()
+  // 隐式：db.execute / db.query，用完自动归还
+  ignore(db.execute("create table t(x integer)"))
+  ignore(db.execute("insert into t values (1)"))
+  let rows = db.query("select x from t")
+  assert_true(rows.has_next())
+  let v : Int = rows.get_row().get(0)
+  assert_true(v == 1)
+  rows.close()
+
+  // 池事务：commit 后连接自动还回池
+  let tx = db.begin_tx()
+  ignore(tx.execute("insert into t values (2)"))
+  tx.commit()
+  let n : Int64 = db.query_one("select count(*) from t").get(0)
+  assert_true(n == 2L)
+
+  let st = db.stats()
+  assert_true(st.acquire_count >= 5L)
+}
+
+///|
 async test "#7 池：复用连接、max_conns 等待、db.close 级联" {
   let db = @mturso.Database::open(":memory:", max_conns=2)
   let c1 = db.connect()

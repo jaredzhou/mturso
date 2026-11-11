@@ -59,16 +59,26 @@ pub struct Database {
   idle_len : @ref.Ref[Int]
   busy : Array[@ffi.Conn?]
   sem : @semaphore.Semaphore
+  stats : @ref.Ref[PoolStats]
   closed : @ref.Ref[Bool]
 }
+pub async fn Database::begin_tx(Self, opts? : TxOptions) -> DbTx raise TursoError
 pub fn Database::close(Self) -> Unit
 pub async fn Database::connect(Self) -> Connection raise TursoError
+pub async fn Database::execute(Self, String, params? : Array[&ToValue]) -> ExecResult raise TursoError
 pub fn Database::is_closed(Self) -> Bool
+pub fn Database::max_conns(Self) -> Int
 pub fn Database::open(String, max_conns? : Int) -> Self raise TursoError
+pub async fn Database::query(Self, String, params? : Array[&ToValue]) -> &Rows raise TursoError
+pub async fn Database::query_one(Self, String, params? : Array[&ToValue]) -> Row raise TursoError
+pub fn Database::stats(Self) -> PoolStats
+pub impl QueryExecutor for Database
+pub impl TxBeginner for Database
 
 pub struct DbTx {
   conn : Connection
   done : @ref.Ref[Bool]
+  release_pool_conn : Bool
 }
 pub async fn DbTx::commit(Self) -> Unit raise TursoError
 pub async fn DbTx::execute(Self, String, params? : Array[&ToValue]) -> ExecResult raise TursoError
@@ -83,11 +93,18 @@ pub struct ExecResult {
 }
 pub fn ExecResult::affected_rows(Self) -> Int
 
+pub(all) struct PoolStats {
+  acquire_count : Int64
+  acquire_wait_count : Int64
+  acquire_wait_duration_ms : Int64
+} derive(Eq, @debug.Debug)
+
 pub struct ResultRows {
   stream : @raw_fd.RawFdStream
   columns : Array[@value.Column]
   stmt : @ffi.Stmt
   conn : @ffi.Conn
+  release : Connection?
   pending : @ref.Ref[Array[@value.Value]?]
   changes : @ref.Ref[Int64]
   done : @ref.Ref[Bool]

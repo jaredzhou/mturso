@@ -46,6 +46,8 @@ pub(open) trait TxBeginner {
 pub struct DbTx {
   conn : Connection
   done : Ref[Bool]
+  /// 池上开的事务：commit/rollback 后把连接还回池。
+  release_pool_conn : Bool
 }
 
 ///|
@@ -81,6 +83,11 @@ pub impl Tx for DbTx with commit(self) -> Unit raise TursoError {
     raise TursoError::QueryError("transaction already finished")
   }
   self.done.val = true
+  defer {
+    if self.release_pool_conn {
+      self.conn.close()
+    }
+  }
   ignore(self.conn.execute("commit"))
 }
 
@@ -90,6 +97,11 @@ pub impl Tx for DbTx with rollback(self) -> Unit raise TursoError {
     raise TursoError::QueryError("transaction already finished")
   }
   self.done.val = true
+  defer {
+    if self.release_pool_conn {
+      self.conn.close()
+    }
+  }
   ignore(self.conn.execute("rollback"))
 }
 
@@ -104,6 +116,15 @@ pub impl TxBeginner for Connection with begin_tx(
   self : Connection,
   opts? : TxOptions,
 ) -> DbTx raise TursoError {
+  self.begin_tx_internal(opts?, release_pool_conn=false)
+}
+
+///|
+async fn Connection::begin_tx_internal(
+  self : Connection,
+  opts? : TxOptions,
+  release_pool_conn~ : Bool,
+) -> DbTx raise TursoError {
   let mode = match opts {
     None => None
     Some(o) => o.mode
@@ -115,7 +136,7 @@ pub impl TxBeginner for Connection with begin_tx(
     _ => "begin"
   }
   ignore(self.execute(sql))
-  DbTx::{ conn: self, done: Ref(false), }
+  DbTx::{ conn: self, done: Ref(false), release_pool_conn, }
 }
 
 ///|

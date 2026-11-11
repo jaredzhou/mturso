@@ -22,6 +22,7 @@ pub struct Database {
   idle_len : Ref[Int]
   busy : Array[@ffi.Conn?]
   sem : @async.Semaphore
+  stats : Ref[PoolStats]
   closed : Ref[Bool]
 }
 
@@ -67,6 +68,7 @@ pub fn Database::open(path : String, max_conns? : Int = 4) -> Database raise Tur
     idle_len: Ref(0),
     busy: [],
     sem: @async.Semaphore::Semaphore(n),
+    stats: Ref({ acquire_count: 0L, acquire_wait_count: 0L, acquire_wait_duration_ms: 0L }),
     closed: Ref(false),
   }
 }
@@ -77,7 +79,24 @@ pub async fn Database::connect(self : Database) -> Connection raise TursoError {
   if self.closed.val {
     raise TursoError::ConnectionError("database is closed")
   }
-  self.sem.acquire()
+  if self.sem.try_acquire() {
+    let st = self.stats.val
+    self.stats.val = {
+      acquire_count: st.acquire_count + 1L,
+      acquire_wait_count: st.acquire_wait_count,
+      acquire_wait_duration_ms: st.acquire_wait_duration_ms,
+    }
+  } else {
+    let t0 = @async.now()
+    self.sem.acquire()
+    let waited = @async.now() - t0
+    let st = self.stats.val
+    self.stats.val = {
+      acquire_count: st.acquire_count + 1L,
+      acquire_wait_count: st.acquire_wait_count + 1L,
+      acquire_wait_duration_ms: st.acquire_wait_duration_ms + waited,
+    }
+  }
   let raw = if self.idle_len.val > 0 {
     self.idle_len.val = self.idle_len.val - 1
     self.idle[self.idle_len.val]
