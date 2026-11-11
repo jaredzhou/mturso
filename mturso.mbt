@@ -1,31 +1,36 @@
 // mturso：Turso Database 的 MoonBit 绑定（C ABI，native）。
 //
-// 层次：`Database`（一个库）→ `Connection`（可开多个，各自独立的事务/语句状态）。
+// 层次：`Database`（一个库 + 连接池，ADR-0001）→ `Connection`（池里的一次 checkout）。
 //
-// 执行模型：
-//   - `query` / `query_one` / `execute` 是 async：prepare + bind 在 MoonBit 侧，
-//     每连接一个 worker 只负责 step；结果按帧推进 socketpair，MoonBit 侧 pull
-//     （读一个算一个，不物化）。
-//   - `exec_blocking` 是同步版本：在调用线程上直接跑，不需要 async 运行时。
+// 执行模型：prepare + bind 在 MoonBit 侧，每连接一个 worker 只 step；
+// 结果按帧推进单向 pipe，MoonBit 侧 pull（读一个算一个，不物化）。
 
 ///|
 /// 值类型从子包转出，使用方只写 `@mturso.Value` / `@mturso.Column`。
 pub using @value { type Value, type Column }
 
 ///|
-/// 数据库句柄。一个 `Database` 可以开出多个 `Connection`。
+/// 数据库句柄 = 一个连接池（见 ADR-0001）。
+///
+/// - `idle`：空闲连接的裸句柄（复用）；
+/// - `busy`：借出中的裸句柄；`None` 是墓碑（已归还，槽位留着让索引稳定）；
+/// - `sem`：`max_conns` 个许可，`connect()` 满了会等。
 pub struct Database {
   raw : @ffi.Db
+  max_conns : Int
+  idle : Array[@ffi.Conn]
+  idle_len : Ref[Int]
+  busy : Array[@ffi.Conn?]
+  sem : @async.Semaphore
+  closed : Ref[Bool]
 }
 
 ///|
-/// 连接句柄。
-///
-/// `db` 字段不是摆设：它让连接**持有数据库的引用**，否则 GC 可能先回收 `Database`，
-/// 其 finalizer 一释放底层资源，连接就成了悬空句柄。
+/// 连接句柄（池里的一次 checkout）。
 pub struct Connection {
   db : Database
   raw : @ffi.Conn
+  busy_index : Int
   closed : Ref[Bool]
 }
 
@@ -50,48 +55,83 @@ fn kind_to_error(kind : Int, msg : String) -> TursoError {
 }
 
 ///|
-/// 打开数据库：`":memory:"` 或文件路径。
-pub fn Database::open(path : String) -> Database raise TursoError {
+/// 打开数据库。`max_conns` 是池上限（默认 4）。
+pub fn Database::open(path : String, max_conns? : Int = 4) -> Database raise TursoError {
   let raw = @ffi.db_open(@utf8.encode(path))
   check_error()
-  { raw, }
-}
-
-///|
-/// 开一个连接（可多次调用，各连接状态独立，各自有一个 worker 线程）。
-pub fn Database::connect(self : Database) -> Connection raise TursoError {
-  let raw = @ffi.db_connect(self.raw)
-  check_error()
-  { db: self, raw, closed: Ref(false), }
-}
-
-///|
-/// 关闭数据库（幂等）。
-pub fn Database::close(self : Database) -> Unit {
-  @ffi.db_close(self.raw)
-}
-
-///|
-/// 关闭连接（幂等；会唤醒并回收它的 worker 线程）。
-pub fn Connection::close(self : Connection) -> Unit {
-  if !self.closed.val {
-    self.closed.val = true
-    @ffi.conn_close(self.raw)
+  let n = if max_conns <= 0 { 1 } else { max_conns }
+  {
+    raw,
+    max_conns: n,
+    idle: [],
+    idle_len: Ref(0),
+    busy: [],
+    sem: @async.Semaphore::Semaphore(n),
+    closed: Ref(false),
   }
 }
 
 ///|
-/// 连接是否已关闭。
+/// 从池里取一条连接：优先复用 idle；否则新建（受 `max_conns` 限制，满了等待）。
+pub async fn Database::connect(self : Database) -> Connection raise TursoError {
+  if self.closed.val {
+    raise TursoError::ConnectionError("database is closed")
+  }
+  self.sem.acquire()
+  let raw = if self.idle_len.val > 0 {
+    self.idle_len.val = self.idle_len.val - 1
+    self.idle[self.idle_len.val]
+  } else {
+    let r = @ffi.db_connect(self.raw)
+    check_error()
+    r
+  }
+  let idx = self.busy.length()
+  self.busy.push(Some(raw))
+  { db: self, raw, busy_index: idx, closed: Ref(false), }
+}
+
+///|
+/// 关闭连接 = **还回池**（幂等；不是销毁）。
+pub fn Connection::close(self : Connection) -> Unit {
+  if self.closed.val {
+    return
+  }
+  self.closed.val = true
+  if self.db.closed.val {
+    return
+  }
+  // 墓碑：槽位留着，索引稳定
+  let busy = self.db.busy
+  busy[self.busy_index] = None
+  // 推回 idle
+  if self.db.idle_len.val < self.db.idle.length() {
+    self.db.idle[self.db.idle_len.val] = self.raw
+  } else {
+    self.db.idle.push(self.raw)
+  }
+  self.db.idle_len.val = self.db.idle_len.val + 1
+  self.db.sem.release()
+}
+
+///|
+/// 连接是否已关闭（已还回池也算关闭）。
 pub fn Connection::is_closed(self : Connection) -> Bool {
   self.closed.val
 }
 
 ///|
-/// 最近一次 INSERT 生成的 rowid。
-pub fn Connection::last_insert_rowid(self : Connection) -> Int64 raise TursoError {
-  if self.closed.val {
+/// 使用前检查：连接已还回 / 库已关 → `ConnectionError`。
+fn Connection::ensure_open(self : Connection) -> Unit raise TursoError {
+  if self.closed.val || self.db.closed.val {
     raise TursoError::ConnectionError("connection is closed")
   }
+}
+
+///|
+/// 最近一次 INSERT 生成的 rowid。
+pub fn Connection::last_insert_rowid(self : Connection) -> Int64 raise TursoError {
+  self.ensure_open()
   let v = @ffi.conn_last_insert_rowid(self.raw)
   check_error()
   v
@@ -118,7 +158,34 @@ pub fn Connection::exec_blocking(
   self : Connection,
   sql : String,
 ) -> Int64 raise TursoError {
+  self.ensure_open()
   let changes = @ffi.conn_exec(self.raw, @utf8.encode(sql))
   check_error()
   changes
+}
+
+///|
+/// 关闭数据库（幂等）：**级联**关掉 idle 和 busy 里的所有连接（join 各自 worker），
+/// 再 `turso_database_deinit`。
+pub fn Database::close(self : Database) -> Unit {
+  if self.closed.val {
+    return
+  }
+  self.closed.val = true
+  for i in 0..<self.idle_len.val {
+    @ffi.conn_close(self.idle[i])
+  }
+  for i in 0..<self.busy.length() {
+    match self.busy[i] {
+      Some(raw) => @ffi.conn_close(raw)
+      None => ()
+    }
+  }
+  @ffi.db_close(self.raw)
+}
+
+///|
+/// 数据库是否已关闭。
+pub fn Database::is_closed(self : Database) -> Bool {
+  self.closed.val
 }

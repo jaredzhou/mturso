@@ -283,7 +283,7 @@ async test "query 遇到多语句明确报错" {
   assert_true(got)
 }
 
-test "用已关闭的连接 → TursoError::ConnectionError" {
+async test "用已关闭的连接 → TursoError::ConnectionError" {
   let db = @mturso.Database::open(":memory:")
   let conn = db.connect()
   conn.close()
@@ -346,6 +346,43 @@ async test "事务：commit / rollback / begin_func / 重复 commit" {
   // begin_func：成功提交
   ignore(@mturso.begin_func(c1, insert3))
   assert_true(one_int(c2, "select count(*) from t") == 2L)
+}
+
+///|
+async test "#7 池：复用连接、max_conns 等待、db.close 级联" {
+  let db = @mturso.Database::open(":memory:", max_conns=2)
+  let c1 = db.connect()
+  let c2 = db.connect()
+  ignore(c1.execute("create table t(x integer)"))
+  ignore(c2.execute("insert into t values (1)"))
+  c1.close()
+  c2.close()
+  assert_true(c1.is_closed())
+
+  // 复用 idle 里的连接
+  let c3 = db.connect()
+  assert_true(one_int(c3, "select count(*) from t") == 1L)
+  c3.close()
+
+  // max_conns=2：借满两条后，第三条要等别人归还
+  let a = db.connect()
+  let b = db.connect()
+  let got : Ref[Bool] = { val: false, }
+  @async.with_task_group(group => {
+    group.spawn_bg(() => {
+      let third = db.connect()
+      got.val = true
+      third.close()
+    })
+    @async.sleep(50)
+    assert_true(!got.val)
+    a.close()
+  })
+  assert_true(got.val)
+  b.close()
+
+  db.close()
+  assert_true(db.is_closed())
 }
 
 ///|

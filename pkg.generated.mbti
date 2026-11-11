@@ -5,6 +5,7 @@ import {
   "jaredzhou/mturso/ffi",
   "jaredzhou/mturso/value",
   "moonbitlang/async/raw_fd",
+  "moonbitlang/async/semaphore",
   "moonbitlang/core/debug",
   "moonbitlang/core/json",
   "moonbitlang/core/ref",
@@ -32,6 +33,7 @@ pub(all) suberror ValueError {
 pub struct Connection {
   db : Database
   raw : @ffi.Conn
+  busy_index : Int
   closed : @ref.Ref[Bool]
 }
 pub async fn Connection::begin_tx(Self, opts? : TxOptions) -> DbTx raise TursoError
@@ -52,10 +54,17 @@ pub impl TxBeginner for Connection
 
 pub struct Database {
   raw : @ffi.Db
+  max_conns : Int
+  idle : Array[@ffi.Conn]
+  idle_len : @ref.Ref[Int]
+  busy : Array[@ffi.Conn?]
+  sem : @semaphore.Semaphore
+  closed : @ref.Ref[Bool]
 }
 pub fn Database::close(Self) -> Unit
-pub fn Database::connect(Self) -> Connection raise TursoError
-pub fn Database::open(String) -> Self raise TursoError
+pub async fn Database::connect(Self) -> Connection raise TursoError
+pub fn Database::is_closed(Self) -> Bool
+pub fn Database::open(String, max_conns? : Int) -> Self raise TursoError
 
 pub struct DbTx {
   conn : Connection

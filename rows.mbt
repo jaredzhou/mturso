@@ -204,6 +204,7 @@ async fn Connection::open_rows(
   sql : String,
   params? : Array[&ToValue],
 ) -> ResultRows raise TursoError {
+  self.ensure_open()
   let encoded = @utf8.encode(sql)
   let stmt = @ffi.conn_prepare_first(self.raw, encoded)
   check_error()
