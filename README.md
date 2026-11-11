@@ -6,7 +6,7 @@ MoonBit bindings for [Turso](https://turso.tech) — the Rust rewrite of SQLite 
 ![turso](https://img.shields.io/badge/turso-0.8.2-informational)
 ![license](https://img.shields.io/badge/license-Apache--2.0-green)
 
-`Database` is a database **and its connection pool**; `Connection` is one checkout from that pool. Queries are typed and **streaming**: results arrive as tagged frames over a pipe, and `Rows` pulls them one at a time — nothing is materialised up front. On native, every connection owns a dedicated C-side worker thread, so statements never block the MoonBit event loop.
+`Database` is a database **and its connection pool**; `Connection` is one checkout from that pool. Queries are typed and streamed row by row, so a large result set never has to be materialised up front. The async API keeps the event loop free while a statement runs.
 
 ```moonbit
 async fn main {
@@ -22,14 +22,15 @@ async fn main {
 
 ## Features
 
-- **Typed values, not text** — `INTEGER` / `REAL` / `TEXT` / `BLOB` / `NULL` are decoded into `Value`, and `Row::get[T]` maps them through `FromValue`.
-- **Positional parameters** — `params=[...]` bind `?1`; the encoding happens in MoonBit, C only calls `bind_positional_*`.
-- **Streaming pull rows** — `query` returns a `Rows` reader: `has_next()` pulls one frame, `get_row()` hands it over. `fetch` / `fetch_one` are the typed shortcuts.
-- **Transactions** — `begin_tx` gives a concrete `DbTx` (`BEGIN [DEFERRED|IMMEDIATE|EXCLUSIVE|CONCURRENT]`), plus `begin_func` for auto commit/rollback.
-- **Retries** — `retry_tx` retries `Busy` / `Conflict` with full-jitter exponential backoff.
-- **Connection pool built in** — `db.query(...)` / `db.execute(...)` acquire and release implicitly; `db.connect()` takes one explicitly; `max_conns` is a hard budget and extra callers wait.
-- **Deterministic close** — `close()` joins worker threads; `db.close()` cascades to every pooled connection.
-- **Engine included** — the Turso shared library ships with the repo (`libs/`, ~20 MB); no separate engine install.
+- **Typed queries** — read a column as `Int`, `Int64`, `Double`, `String`, `Bytes`, `Json`, `Timestamp`, an `Option`, a tuple, or your own `FromRow` type. `NULL` and `BLOB` stay distinct — nothing is rendered to text.
+- **Parameter binding** — write `?1`, `?2`, … and pass `params=[...]`. No string concatenation.
+- **One-line result mapping** — `fetch` collects rows into `Array[T]`; `fetch_one` returns exactly one row, or raises `NoRows`.
+- **Transactions** — `begin_tx` / `commit` / `rollback`, with `Deferred`, `Immediate`, `Exclusive`, and Turso's `Concurrent` (`BEGIN CONCURRENT`). `begin_func` commits on success and rolls back on error.
+- **Automatic retries** — `retry_tx` reruns a whole transaction on `Busy` or `Conflict`, with full-jitter backoff and an attempts/time budget.
+- **Built-in connection pool** — `max_conns` caps how many connections (and C-side worker threads) run at once. `db.query` / `db.execute` borrow and return connections for you; `db.connect()` checks one out explicitly; `db.stats()` reports contention.
+- **Non-blocking async API** — awaiting a slow statement leaves the event loop free to run other tasks.
+- **Deterministic shutdown** — `close()` joins the worker; `db.close()` closes every pooled connection and then the database.
+- **Self-contained** — the Turso engine ships in `libs/`; no separate install.
 
 ## Platform support
 
