@@ -11,7 +11,7 @@ import {
 }
 
 // Values
-pub async fn[T, B : TxBeginner] begin_func(B, async (&Tx) -> T raise TursoError) -> T raise TursoError
+pub async fn[T, B : TxBeginner] begin_func(B, async (DbTx) -> T raise TursoError) -> T raise TursoError
 
 // Errors
 pub suberror TursoError {
@@ -27,24 +27,12 @@ pub(all) suberror ValueError {
 }
 
 // Types and methods
-pub struct ConnTx {
-  conn : Connection
-  done : @ref.Ref[Bool]
-}
-pub async fn ConnTx::commit(Self) -> Unit raise TursoError
-pub async fn ConnTx::execute(Self, String, params? : Array[&ToValue]) -> ExecResult raise TursoError
-pub async fn ConnTx::query(Self, String, params? : Array[&ToValue]) -> &Rows raise TursoError
-pub async fn ConnTx::query_one(Self, String, params? : Array[&ToValue]) -> Row raise TursoError
-pub async fn ConnTx::rollback(Self) -> Unit raise TursoError
-pub impl QueryExecutor for ConnTx
-pub impl Tx for ConnTx
-
 pub struct Connection {
   db : Database
   raw : @ffi.Conn
   closed : @ref.Ref[Bool]
 }
-pub async fn Connection::begin_tx(Self, opts? : TxOptions) -> &Tx raise TursoError
+pub async fn Connection::begin_tx(Self, opts? : TxOptions) -> DbTx raise TursoError
 pub fn Connection::close(Self) -> Unit
 pub fn Connection::exec_blocking(Self, String) -> Int64 raise TursoError
 pub fn Connection::exec_params(Self, String, params? : Array[&ToValue]) -> Int64 raise TursoError
@@ -66,6 +54,18 @@ pub struct Database {
 pub fn Database::close(Self) -> Unit
 pub fn Database::connect(Self) -> Connection raise TursoError
 pub fn Database::open(String) -> Self raise TursoError
+
+pub struct DbTx {
+  conn : Connection
+  done : @ref.Ref[Bool]
+}
+pub async fn DbTx::commit(Self) -> Unit raise TursoError
+pub async fn DbTx::execute(Self, String, params? : Array[&ToValue]) -> ExecResult raise TursoError
+pub async fn DbTx::query(Self, String, params? : Array[&ToValue]) -> &Rows raise TursoError
+pub async fn DbTx::query_one(Self, String, params? : Array[&ToValue]) -> Row raise TursoError
+pub async fn DbTx::rollback(Self) -> Unit raise TursoError
+pub impl QueryExecutor for DbTx
+pub impl Tx for DbTx
 
 pub struct ExecResult {
   changes : Int64
@@ -225,5 +225,5 @@ pub(open) trait Tx : QueryExecutor {
 }
 
 pub(open) trait TxBeginner {
-  async fn begin_tx(Self, opts? : TxOptions) -> &Tx raise TursoError
+  async fn begin_tx(Self, opts? : TxOptions) -> DbTx raise TursoError
 }

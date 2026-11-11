@@ -1,7 +1,9 @@
 // 事务：TxMode / TxOptions / Tx / TxBeginner / begin_func。
 //
-// 本版实现很薄：`begin_tx` 在连接上发 BEGIN，`Tx` 的 query/execute 直接委托给
-// 同一条连接（连接本来就是独占、线性的），commit / rollback 发对应 SQL。
+// 参考 moonpg：**只有一个具体事务类型 `DbTx`**（将来的池版也复用它，届时会有
+// 一个可选的 pool_conn）。`begin_tx` 直接返回 `DbTx` 这个具体类型，所以：
+//   - `tx.execute(...)` / `tx.query(...)` / `tx.commit()` 都是普通 dot 调用；
+//   - `TxBeginner` 的返回类型对所有实现者一致，`&TxBeginner` 仍然可用。
 
 ///|
 /// `BEGIN` 的模式。前三个与 SQLite 一一对应；`Concurrent` 是 Turso 的
@@ -33,21 +35,21 @@ pub(open) trait Tx: QueryExecutor {
 }
 
 ///|
-/// 能开事务的东西（本版：`Connection`）。
+/// 能开事务的东西（本版：`Connection`；池落地后返回同一个 `DbTx`）。
 pub(open) trait TxBeginner {
-  async fn begin_tx(Self, opts? : TxOptions) -> &Tx raise TursoError
+  async fn begin_tx(Self, opts? : TxOptions) -> DbTx raise TursoError
 }
 
 ///|
-/// `Connection` 上的事务实现。
-pub struct ConnTx {
+/// 具体事务。`begin_tx` 返回它，所以事务里的调用都是 dot 调用。
+pub struct DbTx {
   conn : Connection
   done : Ref[Bool]
 }
 
 ///|
-pub impl QueryExecutor for ConnTx with query(
-  self : ConnTx,
+pub impl QueryExecutor for DbTx with query(
+  self : DbTx,
   sql : String,
   params? : Array[&ToValue],
 ) -> &Rows raise TursoError {
@@ -55,8 +57,8 @@ pub impl QueryExecutor for ConnTx with query(
 }
 
 ///|
-pub impl QueryExecutor for ConnTx with query_one(
-  self : ConnTx,
+pub impl QueryExecutor for DbTx with query_one(
+  self : DbTx,
   sql : String,
   params? : Array[&ToValue],
 ) -> Row raise TursoError {
@@ -64,8 +66,8 @@ pub impl QueryExecutor for ConnTx with query_one(
 }
 
 ///|
-pub impl QueryExecutor for ConnTx with execute(
-  self : ConnTx,
+pub impl QueryExecutor for DbTx with execute(
+  self : DbTx,
   sql : String,
   params? : Array[&ToValue],
 ) -> ExecResult raise TursoError {
@@ -73,7 +75,7 @@ pub impl QueryExecutor for ConnTx with execute(
 }
 
 ///|
-pub impl Tx for ConnTx with commit(self) -> Unit raise TursoError {
+pub impl Tx for DbTx with commit(self) -> Unit raise TursoError {
   if self.done.val {
     raise TursoError::QueryError("transaction already finished")
   }
@@ -82,7 +84,7 @@ pub impl Tx for ConnTx with commit(self) -> Unit raise TursoError {
 }
 
 ///|
-pub impl Tx for ConnTx with rollback(self) -> Unit raise TursoError {
+pub impl Tx for DbTx with rollback(self) -> Unit raise TursoError {
   if self.done.val {
     raise TursoError::QueryError("transaction already finished")
   }
@@ -91,16 +93,16 @@ pub impl Tx for ConnTx with rollback(self) -> Unit raise TursoError {
 }
 
 ///|
-pub extend ConnTx with QueryExecutor::{query, query_one, execute}
+pub extend DbTx with QueryExecutor::{query, query_one, execute}
 
 ///|
-pub extend ConnTx with Tx::{commit, rollback}
+pub extend DbTx with Tx::{commit, rollback}
 
 ///|
 pub impl TxBeginner for Connection with begin_tx(
   self : Connection,
   opts? : TxOptions,
-) -> &Tx raise TursoError {
+) -> DbTx raise TursoError {
   let mode = match opts {
     None => None
     Some(o) => o.mode
@@ -112,7 +114,7 @@ pub impl TxBeginner for Connection with begin_tx(
     _ => "begin"
   }
   ignore(self.execute(sql))
-  ConnTx::{ conn: self, done: Ref(false), }
+  DbTx::{ conn: self, done: Ref(false), }
 }
 
 ///|
@@ -122,7 +124,7 @@ pub extend Connection with TxBeginner::{begin_tx}
 /// 开事务 → 跑 `f` → 成功 commit；出错 rollback（吞掉 rollback 的错）后重新抛出。
 pub async fn[T, B : TxBeginner] begin_func(
   beginner : B,
-  f : async (&Tx) -> T raise TursoError,
+  f : async (DbTx) -> T raise TursoError,
 ) -> T raise TursoError {
   let tx = beginner.begin_tx()
   errdefer {

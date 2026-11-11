@@ -303,8 +303,8 @@ test "用已关闭的连接 → TursoError::ConnectionError" {
 
 ///|
 ///|
-async fn insert3(tx : &@mturso.Tx) -> Int raise @mturso.TursoError {
-  ignore(@mturso.QueryExecutor::execute(tx, "insert into t(v) values (3)"))
+async fn insert3(tx : @mturso.DbTx) -> Int raise @mturso.TursoError {
+  ignore(tx.execute("insert into t(v) values (3)"))
   0
 }
 
@@ -320,7 +320,7 @@ async test "事务：commit / rollback / begin_func / 重复 commit" {
 
   // commit
   let tx = c1.begin_tx()
-  ignore(@mturso.QueryExecutor::execute(tx, "insert into t(v) values (1)"))
+  ignore(tx.execute("insert into t(v) values (1)"))
   tx.commit()
   assert_true(one_int(c2, "select count(*) from t") == 1L)
 
@@ -340,7 +340,7 @@ async test "事务：commit / rollback / begin_func / 重复 commit" {
       read_only: None,
     },
   )
-  ignore(@mturso.QueryExecutor::execute(tx2, "insert into t(v) values (2)"))
+  ignore(tx2.execute("insert into t(v) values (2)"))
   tx2.rollback()
   assert_true(one_int(c2, "select count(*) from t") == 1L)
 
