@@ -54,8 +54,9 @@ Background: Turso is a **Rust rewrite of SQLite**; upstream is `github.com/turso
 - `libs/` — the Turso C shared library checked into the repo (`libturso_sync_sdk_kit.so`, **20 MB**) plus its `.sha256`. `ffi/stub.c` loads it at runtime; `scripts/fetch-turso-lib.sh` only copies the platform library and hash, never edits `moon.pkg`. (If you would rather not version a 20 MB blob, add `libs/` to `.gitignore` and fetch it on demand.)
 - `_build/` — MoonBit build output, **never commit** (already in `.gitignore`).
 - `docs/agents/` — the agent-skills config (issue tracker, triage labels, domain docs layout).
-- `notes/` — research notes, **one topic per file** (`architecture.md`, `source-walkthrough.md`, `go-sdk.md`, `turso-binding-guide.md`).
+- `notes/` — research notes, **one topic per file** (`architecture.md`, `source-walkthrough.md`, `go-sdk.md`, `turso-binding-guide.md`, `wasm-spike.md`).
 - `examples/` — runnable examples: `examples/tursodb-basics.sh` (CLI), `examples/go-sdk/` (Go SDK), `examples/c-abi-worker/` (minimal C ABI "worker thread + doorbell" skeleton, ~150 lines, measured).
+- `spike/wasm-browser/` — runnable MoonBit `wasm` + Turso wasm + Node worker prototype for ticket #10. It is a research spike, not part of the published native module.
 - `scripts/` — helper scripts: `fetch-source.sh` (clone the matching engine source), `fetch-turso-lib.sh` (copy the platform C library + hash), `fetch-rag-assets.sh` (model), `fetch-rag-corpus.sh` / `fetch-rag-corpus-zh.sh` (English / Chinese corpora), `build-llama-lib.sh` (native embedding library).
 - Root files: `AGENTS.md`, `README.md`.
 - Temp databases always go in a `mktemp -d` directory; **never commit `*.db` / `*.db-log` / `*.db-wal`**. Same for Go artifacts (`examples/go-sdk/*.db`, module caches).
@@ -71,7 +72,7 @@ Background: Turso is a **Rust rewrite of SQLite**; upstream is `github.com/turso
 ```bash
 # --- the MoonBit binding (jaredzhou/mturso) ---
 moon check --target native                  # type check
-moon test  --target native                  # → Total tests: 6, passed: 6
+moon test  --target native                  # → Total tests: 28, passed: 28
 moon fmt && moon info                       # format + regenerate pkg.generated.mbti
 
 # version
@@ -113,6 +114,7 @@ Other run modes: `--mcp` (built-in MCP server), `--sync-server <addr>` / `--sync
 3. **Feature deep dives** (in progress): vector search, FTS (tantivy-based), JSON/JSONB, custom types, materialized views (incremental/DBSP), CDC, encryption at rest, the sync protocol, the MCP server, the Postgres frontend.
 4. **RAG demo** ✅: the `rag` subcommand in `examples/go-sdk/` — chunk and embed real articles (Gutenberg, public domain) with a local embedding model → store them in Turso vectors → nearest-neighbour retrieval → assemble the context. English uses MiniLM-L6-v2 (`data/`), Chinese uses bge-small-zh-v1.5 (`data-zh/`).
 5. **MoonBit binding v0.2** (planned): implement the `design/` spec — typed values, parameter binding, materialized row sets, transaction objects, retry helpers, connection pool. The work is broken into tickets in GitHub Issues; the spec is issue #1.
+6. **WASM spike** ✅: MoonBit `wasm` → synchronous host ABI → Node worker → `@tursodatabase/database-wasm` end-to-end demo, with size/memory measurements and implementation slices in `notes/wasm-spike.md`. Browser and OPFS remain `TODO(verify)`.
 
 ## Gotchas
 

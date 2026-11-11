@@ -11,12 +11,14 @@ MoonBit bindings for [Turso](https://turso.tech) — the Rust rewrite of SQLite 
 ```moonbit
 async fn main {
   let db = @mturso.Database::open(":memory:")
+  defer db.close()
   ignore(db.execute("create table t(id integer primary key, name text)"))
   ignore(db.execute("insert into t(name) values ('alice'), ('bob')"))
 
-  let users : Array[(Int, String)] = db.fetch("select id, name from t order by id")
+  let conn = db.connect()
+  defer conn.close()
+  let users : Array[(Int, String)] = conn.fetch("select id, name from t order by id")
   println(users)   // [(1, "alice"), (2, "bob")]
-  db.close()
 }
 ```
 
@@ -40,7 +42,7 @@ async fn main {
 | **Linux aarch64** | ✅ tested | CI runs the suite on `ubuntu-24.04-arm` |
 | **macOS arm64** | ✅ tested | CI runs the suite on `macos-latest` |
 | **Windows x64** | 🚧 planned | Turso ships only a DLL (no import library), so the engine must be loaded at run time; the C stub also needs Win32 threads. Tracked in [#11](https://github.com/jaredzhou/mturso/issues/11) |
-| **WebAssembly / edge** | 🚧 planned | Prototyped: the MoonBit module plus a host shim over Turso's wasm build. Tracked in [#10](https://github.com/jaredzhou/mturso/issues/10) |
+| **WebAssembly / edge** | 🧪 spike | MoonBit `wasm` + Turso wasm runs end to end under a Node worker host; browser/OPFS and a public API remain planned. See [`notes/wasm-spike.md`](notes/wasm-spike.md) and [#10](https://github.com/jaredzhou/mturso/issues/10) |
 
 macOS x86_64 is deliberately absent (MoonBit ships no `darwin-x86_64` toolchain), as is Windows arm64 (the engine's platform-libs package ships a 0-byte placeholder DLL).
 
@@ -52,6 +54,12 @@ Not on mooncakes yet, so consume it from source through a **workspace**:
 git clone git@github.com:jaredzhou/mturso.git
 cd your-project
 moon work init /path/to/mturso .        # put mturso and your module in one workspace
+```
+
+If the project already has a workspace, add mturso to it instead:
+
+```bash
+moon work use /path/to/mturso
 ```
 
 Your `moon.mod`:
@@ -72,24 +80,55 @@ import {
 }
 ```
 
-There are no link flags, rpaths, or `LD_LIBRARY_PATH` to copy. The C stub loads the
-engine on first use. `MTURSO_LIB_PATH` is an explicit override; when it is unset,
-the lookup order is:
+### Native dynamic library
+
+The engine is a native shared library loaded at runtime by `ffi/stub.c`. MoonBit
+package files therefore need no `link`, `cc-link-flags`, `rpath`, or
+`LD_LIBRARY_PATH`.
+
+The platform file names are:
+
+| Platform | File |
+| --- | --- |
+| Linux x86_64 / aarch64 | `libturso_sync_sdk_kit.so` |
+| macOS arm64 | `libturso_sync_sdk_kit.dylib` |
+| Windows x64 (planned) | `turso_sync_sdk_kit.dll` |
+
+`MTURSO_LIB_PATH` is an explicit file override. When it is unset, the lookup
+order is:
 
 1. the `libs/` directory in the mturso source checkout used to build the binding
 2. `libs/` beside the executable
 3. `./libs/` under the process working directory
 4. the platform's normal dynamic-loader search path
 
-For a deployed binary, either copy the platform library to `<exe-dir>/libs/`, or
-point directly at it:
+For source-workspace development, no environment variable is normally needed.
+For another platform or architecture, place the matching library in `libs/`:
+
+```bash
+bash scripts/fetch-turso-lib.sh
+```
+
+The script only copies the platform library and updates its `.sha256`; it never
+changes `moon.pkg`.
+
+For a deployed executable, copy the library next to it:
+
+```bash
+mkdir -p dist/libs
+cp /path/to/mturso/libs/libturso_sync_sdk_kit.so dist/libs/
+./dist/your-app
+```
+
+Or point to it explicitly:
 
 ```bash
 MTURSO_LIB_PATH=/opt/mturso/libturso_sync_sdk_kit.so ./your-app
 ```
 
-Use the `.dylib` name on macOS. If `MTURSO_LIB_PATH` is set but the file cannot be
-loaded, opening the database fails with the exact path and loader error.
+Use the `.dylib` name on macOS. When `MTURSO_LIB_PATH` is set, it is the only
+file attempted. A bad path fails immediately with the path and dynamic-loader
+error rather than silently loading another copy.
 
 ## Quickstart
 
@@ -126,9 +165,9 @@ async fn main {
 ### Typed collection with `fetch` / `fetch_one`
 
 ```moonbit
-async fn demo(db : @mturso.Database) -> Unit raise @mturso.TursoError {
-  let users : Array[(Int, String)] = db.fetch("select id, name from t order by id")
-  let one : (Int, String) = db.fetch_one(
+async fn demo(conn : @mturso.Connection) -> Unit raise @mturso.TursoError {
+  let users : Array[(Int, String)] = conn.fetch("select id, name from t order by id")
+  let one : (Int, String) = conn.fetch_one(
     "select id, name from t where id = ?1",
     params=[1],
   )
@@ -257,7 +296,7 @@ async fn demo(conn : @mturso.Connection) -> Unit raise @mturso.TursoError {
 
 ## Roadmap
 
-- **#10** — WebAssembly / edge spike.
+- **#10** — WebAssembly / edge spike: minimal Node-host prototype complete; browser-backed API remains planned. See [`notes/wasm-spike.md`](notes/wasm-spike.md).
 - **#11** — Windows x64 (MSVC).
 
 ## Development
