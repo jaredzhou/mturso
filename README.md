@@ -24,7 +24,7 @@ async fn main {
 
 ## Features
 
-- **Query APIs with explicit result shapes** — `query` returns a pull-based `Rows` reader for row-by-row iteration; `query_one` returns exactly one `Row` (or `NoRows`); both expose columns through the `FromValue` decoding contract. `execute` is the DDL/DML entry point and returns `ExecResult` with affected rows. The call site always says whether you want rows, one row, or only execution status.
+- **Query APIs with explicit result shapes** — `query` returns a pull-based `Rows` reader for row-by-row iteration; `query_one` returns exactly one `Row` (or `NoRows`); both expose columns through the `FromValue` decoding contract. `fetch` and `fetch_one` build on the same model, collecting rows into `Array[T]` or one `T` through `FromRow`. `execute` is the DDL/DML entry point and returns `ExecResult` with affected rows. The call site always says whether you want a stream, one row, a typed collection, or only execution status.
 - **Bind values safely with `ToValue`** — pass `params=[...]` and let `ToValue` encode integers, floats, strings, blobs, options, JSON, timestamps and tuples; `FromValue` / `FromRow` decode them back. No SQL string building.
 - **Built-in connection pool** — `Database` is the pool: `max_conns` caps concurrency, `db.query` / `db.execute` borrow a connection automatically, `db.connect()` checks one out explicitly, and `db.stats()` shows contention.
 - **First-class transactions** — `begin_tx` / `commit` / `rollback`, with `Deferred`, `Immediate`, `Exclusive`, and Turso's `BEGIN CONCURRENT`; `begin_func` commits on success and rolls back on error.
