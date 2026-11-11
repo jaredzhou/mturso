@@ -8,7 +8,8 @@
 /// 与 Turso 内建的 `timestamp` custom type 对齐：那个类型的 base 是 **TEXT**
 /// （ISO 8601），不是整数（见 docs.turso.tech/sql-reference/data-types）。
 /// 要数值就走 `unix()`（秒）/ `Timestamp::from_unix()`。
-pub(all) struct Timestamp(String) derive(Eq, Debug)
+#derive(Eq, Debug)
+pub(all) struct Timestamp(String)
 
 // ---------------------------------------------------------------------------
 // ISO 8601 ↔ UNIX 秒（UTC）。用 Howard Hinnant 的 civil↔days 算法。

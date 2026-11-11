@@ -2,12 +2,13 @@
 
 ///|
 /// 重试预算。
+#derive(Eq, Debug)
 pub(all) struct RetryOptions {
   attempts : Int
   base_delay_ms : Int
   max_delay_ms : Int
   budget_ms : Int?
-} derive(Eq, Debug)
+}
 
 ///|
 pub fn RetryOptions::default() -> RetryOptions {

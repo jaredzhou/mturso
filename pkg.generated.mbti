@@ -16,13 +16,14 @@ pub async fn[T, B : TxBeginner] begin_func(B, async (DbTx) -> T raise TursoError
 pub async fn[T, B : TxBeginner] retry_tx(B, async (DbTx) -> T raise TursoError, opts? : RetryOptions) -> T raise TursoError
 
 // Errors
+#derive(@debug.Debug)
 pub suberror TursoError {
   ConnectionError(String)
   QueryError(String)
   NoRows
   Busy(String)
   Conflict(String)
-} derive(@debug.Debug)
+}
 
 pub(all) suberror ValueError {
   ValueError(String)
@@ -84,16 +85,18 @@ pub struct ExecResult {
 }
 pub fn ExecResult::affected_rows(Self) -> Int
 
+#derive(Eq, @debug.Debug)
 pub(all) enum JournalMode {
   Wal
   Mvcc
-} derive(Eq, @debug.Debug)
+}
 
+#derive(Eq, @debug.Debug)
 pub(all) struct PoolStats {
   acquire_count : Int64
   acquire_wait_count : Int64
   acquire_wait_duration_ms : Int64
-} derive(Eq, @debug.Debug)
+}
 
 pub struct ResultRows {
   stream : @raw_fd.RawFdStream
@@ -113,12 +116,13 @@ pub fn ResultRows::get_row(Self) -> Row raise TursoError
 pub async fn ResultRows::has_next(Self) -> Bool raise TursoError
 pub impl Rows for ResultRows
 
+#derive(Eq, @debug.Debug)
 pub(all) struct RetryOptions {
   attempts : Int
   base_delay_ms : Int
   max_delay_ms : Int
   budget_ms : Int?
-} derive(Eq, @debug.Debug)
+}
 pub fn RetryOptions::default() -> Self
 
 pub struct Row {
@@ -133,24 +137,27 @@ pub fn Row::len(Self) -> Int
 pub fn Row::value(Self, Int) -> @value.Value
 pub fn Row::value_raw(Self, Int) -> Bytes
 
-pub(all) struct Timestamp(String) derive(Eq, @debug.Debug)
+#derive(Eq, @debug.Debug)
+pub(all) struct Timestamp(String)
 pub fn Timestamp::from_unix(Int64) -> Self
 pub fn Timestamp::unix(Self) -> Int64 raise ValueError
 pub impl FromRow for Timestamp
 pub impl FromValue for Timestamp
 pub impl ToValue for Timestamp
 
+#derive(Eq, @debug.Debug)
 pub(all) enum TxMode {
   Deferred
   Immediate
   Exclusive
   Concurrent
-} derive(Eq, @debug.Debug)
+}
 
+#derive(Eq, @debug.Debug)
 pub(all) struct TxOptions {
   mode : TxMode?
   read_only : Bool?
-} derive(Eq, @debug.Debug)
+}
 pub fn TxOptions::default() -> Self
 
 // Type aliases
@@ -186,8 +193,8 @@ pub impl FromRow for String
 pub impl[T : FromValue] FromRow for T?
 pub impl FromRow for Bytes
 pub impl[T : @json.FromJson] FromRow for Array[T]
-pub impl FromRow for Json
 pub impl[V : @json.FromJson] FromRow for Map[String, V]
+pub impl FromRow for @json.Json
 pub impl[T : FromValue] FromRow for @ref.Ref[T]
 pub impl[A : FromValue, B : FromValue] FromRow for (A, B)
 pub impl[A : FromValue, B : FromValue, C : FromValue] FromRow for (A, B, C)
@@ -212,8 +219,8 @@ pub impl FromValue for String
 pub impl[T : FromValue] FromValue for T?
 pub impl FromValue for Bytes
 pub impl[T : @json.FromJson] FromValue for Array[T]
-pub impl FromValue for Json
 pub impl[V : @json.FromJson] FromValue for Map[String, V]
+pub impl FromValue for @json.Json
 pub impl[T : FromValue] FromValue for @ref.Ref[T]
 
 pub(open) trait QueryExecutor {
@@ -250,9 +257,9 @@ pub impl ToValue for String
 pub impl[T : ToValue] ToValue for T?
 pub impl ToValue for Bytes
 pub impl ToValue for @value.Value
-pub impl[T : ToJson] ToValue for Array[T]
-pub impl ToValue for Json
-pub impl[V : ToJson] ToValue for Map[String, V]
+pub impl[T : @json.ToJson] ToValue for Array[T]
+pub impl[V : @json.ToJson] ToValue for Map[String, V]
+pub impl ToValue for @json.Json
 pub impl[T : ToValue] ToValue for @ref.Ref[T]
 
 pub(open) trait Tx {

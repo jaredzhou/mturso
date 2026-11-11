@@ -6,8 +6,9 @@
 
 ///|
 /// 池的观测数据。
+#derive(Eq, Debug)
 pub(all) struct PoolStats {
   acquire_count : Int64
   acquire_wait_count : Int64
   acquire_wait_duration_ms : Int64
-} derive(Eq, Debug)
+}

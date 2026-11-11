@@ -8,19 +8,21 @@
 ///|
 /// `BEGIN` 的模式。前三个与 SQLite 一一对应；`Concurrent` 是 Turso 的
 /// `BEGIN CONCURRENT`（只在 MVCC 下有意义；非 MVCC 下会**硬报错**）。
+#derive(Eq, Debug)
 pub(all) enum TxMode {
   Deferred
   Immediate
   Exclusive
   Concurrent
-} derive(Eq, Debug)
+}
 
 ///|
 /// `begin_tx` 的选项。
+#derive(Eq, Debug)
 pub(all) struct TxOptions {
   mode : TxMode?
   read_only : Bool?
-} derive(Eq, Debug)
+}
 
 ///|
 pub fn TxOptions::default() -> TxOptions {
@@ -189,9 +191,15 @@ pub async fn[T, B : TxBeginner] begin_func(
 ) -> T raise TursoError {
   let tx = beginner.begin_tx()
   errdefer {
-    ignore(tx.rollback() catch {
+    try {
+      @async.protect_from_cancel(() => {
+        ignore(tx.rollback())
+      })
+    } catch {
       _ => ()
-    })
+    } noraise {
+      _ => ()
+    }
   }
   let result = f(tx)
   tx.commit()

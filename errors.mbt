@@ -12,13 +12,14 @@
 /// 撞到哪一个**不取决于**你用哪个重试助手，而取决于这条连接的运行模式：
 /// 没开 MVCC（或开了 MVCC 但用普通 `BEGIN`）走写者互斥 → `Busy`；
 /// MVCC + `BEGIN CONCURRENT` 走乐观并发 → 提交时 `Conflict`。
+#derive(Debug)
 pub suberror TursoError {
   ConnectionError(String)
   QueryError(String)
   NoRows
   Busy(String)
   Conflict(String)
-} derive(Debug)
+}
 
 ///|
 /// 值转换错误（与数据库错误分开：一个是「取出来的东西不是我想要的类型」，

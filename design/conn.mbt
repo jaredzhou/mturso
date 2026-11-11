@@ -157,10 +157,11 @@ declare pub impl TxBeginner for Database
 
 ///|
 /// 引擎真正支持（`JournalMode::supported()`）的 journal mode 就这两个。
+#derive(Eq, Debug)
 pub(all) enum JournalMode {
   Wal
   Mvcc
-} derive(Eq, Debug)
+}
 
 ///|
 /// 设置这个库的 journal mode（内部借一条连接发 `PRAGMA journal_mode=...`）。

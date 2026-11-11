@@ -14,17 +14,19 @@
 /// MVCC + `BEGIN CONCURRENT` 走乐观并发 → 提交时 `Conflict`。
 /// 两者都是「可重试」，`retry_tx` 重试的就是这一档错误；没有语句级助手 ——
 /// 读不需要重试，写要能重试就显式走事务，见 `tx.mbt`。
+#derive(Debug)
 pub suberror TursoError {
   ConnectionError(String)
   QueryError(String)
   NoRows
   Busy(String)
   Conflict(String)
-} derive(Debug)
+}
 
 ///|
 /// 值转换错误（与数据库错误分开：一个是「取出来的东西不是我想要的类型」，
 /// 一个是「数据库那边失败了」）。
+#derive(Debug)
 pub suberror ValueError {
   ValueError(String)
-} derive(Debug)
+}

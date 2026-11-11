@@ -11,10 +11,11 @@ pub using @value { type Value, type Column }
 
 ///|
 /// Turso 支持的 journal mode。它是库/文件级属性，不是单连接属性。
+#derive(Eq, Debug)
 pub(all) enum JournalMode {
   Wal
   Mvcc
-} derive(Eq, Debug)
+}
 
 ///|
 /// 数据库句柄 = 一个连接池（见 ADR-0001）。

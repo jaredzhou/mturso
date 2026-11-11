@@ -3,20 +3,22 @@
 ///|
 /// `BEGIN` 的模式。前三个与 SQLite 一一对应；`Concurrent` 是 Turso 的
 /// `BEGIN CONCURRENT`（只在 MVCC 下有意义；非 MVCC 下会**硬报错**）。
+#derive(Eq, Debug)
 pub(all) enum TxMode {
   Deferred
   Immediate
   Exclusive
   Concurrent
-} derive(Eq, Debug)
+}
 
 ///|
 /// `begin_tx` 的选项。`mode = None` 表示用库级默认
 /// （`Database::default_tx_mode()`，见 conn.mbt）。
+#derive(Eq, Debug)
 pub(all) struct TxOptions {
   mode : TxMode?
   read_only : Bool?
-} derive(Eq, Debug)
+}
 
 ///|
 declare pub fn TxOptions::default() -> TxOptions
@@ -78,12 +80,13 @@ pub(open) trait TxBeginner {
 
 ///|
 /// 重试预算（full-jitter 指数退避）。
+#derive(Eq, Debug)
 pub(all) struct RetryOptions {
   attempts : Int
   base_delay_ms : Int
   max_delay_ms : Int
   budget_ms : Int?
-} derive(Eq, Debug)
+}
 
 ///|
 declare pub fn RetryOptions::default() -> RetryOptions
