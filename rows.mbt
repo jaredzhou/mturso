@@ -204,8 +204,22 @@ async fn Connection::open_rows(
   sql : String,
   params? : Array[&ToValue],
 ) -> ResultRows raise TursoError {
-  let stmt = @ffi.conn_prepare(self.raw, @utf8.encode(sql))
+  let encoded = @utf8.encode(sql)
+  let stmt = @ffi.conn_prepare_first(self.raw, encoded)
   check_error()
+  // query 只接受单语句：tail 之后除空白/分号外不能再有内容
+  let mut extra = false
+  for i in @ffi.stmt_tail(stmt).to_int()..<encoded.length() {
+    let c = encoded[i].to_int()
+    if c != 59 && c != 32 && c != 10 && c != 13 && c != 9 {
+      extra = true
+    }
+  }
+  if extra {
+    raise TursoError::QueryError(
+      "query() accepts a single statement; use execute() for scripts",
+    )
+  }
   bind_params(stmt, params)
   let fd = @ffi.submit_stmt_rows(self.raw, stmt)
   check_error()

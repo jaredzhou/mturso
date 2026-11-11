@@ -146,6 +146,8 @@ pub(open) trait QueryExecutor {
   async fn query_one(Self, String, params? : Array[&ToValue]) -> Row raise TursoError
   async fn execute(Self, String, params? : Array[&ToValue]) -> ExecResult raise TursoError
 }
+pub async fn[T : FromRow] &QueryExecutor::fetch(Self, String, params? : Array[&ToValue]) -> Array[T] raise TursoError
+pub async fn[T : FromRow] &QueryExecutor::fetch_one(Self, String, params? : Array[&ToValue]) -> T raise TursoError
 
 pub(open) trait Rows {
   async fn has_next(Self) -> Bool raise TursoError

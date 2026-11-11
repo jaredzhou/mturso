@@ -917,6 +917,7 @@ int32_t mturso_last_error_kind(void) { return (int32_t)g_kind; }
 
 typedef struct {
   turso_statement_t *stmt;
+  int64_t tail; // prepare_first 的尾巴偏移（单语句校验用）
 } mturso_stmt_t;
 
 static void stmt_finalize(void *self) {
@@ -954,6 +955,32 @@ void mturso_stmt_deinit(mturso_stmt_t *stmt) {
   turso_statement_deinit(stmt->stmt);
   stmt->stmt = NULL;
 }
+
+// prepare_first：拿第一条语句，并把「尾巴偏移」记在 stmt 上。
+MOONBIT_FFI_EXPORT
+mturso_stmt_t *mturso_conn_prepare_first(mturso_conn_t *conn, moonbit_bytes_t sql) {
+  clear_err();
+  mturso_stmt_t *h =
+      (mturso_stmt_t *)moonbit_make_external_object(stmt_finalize, sizeof(mturso_stmt_t));
+  memset(h, 0, sizeof(mturso_stmt_t));
+  if (conn == NULL || conn->conn == NULL) {
+    set_err("connection is not open");
+    return h;
+  }
+  const char *err = NULL;
+  size_t tail = 0;
+  turso_status_code_t st =
+      turso_connection_prepare_first(conn->conn, (const char *)sql, &h->stmt, &tail, &err);
+  if (st != TURSO_OK) {
+    set_err_kind(err, kind_from_status(st));
+  }
+  h->tail = (int64_t)tail;
+  return h;
+}
+
+///|
+MOONBIT_FFI_EXPORT
+int64_t mturso_stmt_tail(mturso_stmt_t *stmt) { return stmt == NULL ? 0 : stmt->tail; }
 
 MOONBIT_FFI_EXPORT
 int64_t mturso_stmt_column_count(mturso_stmt_t *stmt) {

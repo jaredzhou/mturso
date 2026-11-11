@@ -81,3 +81,38 @@ pub struct ExecResult {
 pub fn ExecResult::affected_rows(self : ExecResult) -> Int {
   self.changes.to_int()
 }
+
+///|
+/// 收集所有行为 `Array[T]`（自动关闭）。
+pub async fn[T : FromRow] &QueryExecutor::fetch(
+  self : &QueryExecutor,
+  sql : String,
+  params? : Array[&ToValue],
+) -> Array[T] raise TursoError {
+  let rows = self.query(sql, params?)
+  errdefer rows.close()
+  let result : Array[T] = []
+  while rows.has_next() {
+    result.push(T::from_row(rows.get_row()))
+  }
+  rows.close()
+  result
+}
+
+///|
+/// 取恰好一行为 `T`；零行抛 `NoRows`。
+pub async fn[T : FromRow] &QueryExecutor::fetch_one(
+  self : &QueryExecutor,
+  sql : String,
+  params? : Array[&ToValue],
+) -> T raise TursoError {
+  let rows = self.query(sql, params?)
+  errdefer rows.close()
+  if rows.has_next() {
+    let row = rows.get_row()
+    rows.close()
+    return T::from_row(row)
+  }
+  rows.close()
+  raise TursoError::NoRows
+}

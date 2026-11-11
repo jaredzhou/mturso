@@ -231,6 +231,65 @@ async test "参数绑定：单个 / 多个 / NULL，结果与字面量一致" {
 }
 
 ///|
+///|
+async fn fetch_one_absent(conn : @mturso.Connection) -> Unit raise @mturso.TursoError {
+  let _row : (Int, String) = &QueryExecutor::fetch_one(
+    conn,
+    "select id, name from t where id = 99",
+  )
+}
+
+///|
+async test "fetch / fetch_one：元组建行 + NoRows" {
+  let db = @mturso.Database::open(":memory:")
+  defer db.close()
+  let conn = db.connect()
+  defer conn.close()
+  ignore(conn.exec_blocking("create table t(id integer, name text)"))
+  ignore(conn.exec_blocking("insert into t values (1, 'a'), (2, 'b')"))
+
+  let all : Array[(Int, String)] = &QueryExecutor::fetch(
+    conn,
+    "select id, name from t order by id",
+  )
+  assert_true(all.length() == 2)
+  assert_true(all[0].0 == 1)
+  assert_true(all[0].1 == "a")
+  assert_true(all[1].0 == 2)
+
+  let one : (Int, String) = &QueryExecutor::fetch_one(
+    conn,
+    "select id, name from t where id = ?1",
+    params=[2],
+  )
+  assert_true(one.0 == 2)
+  assert_true(one.1 == "b")
+
+  let mut no_rows = false
+  try ignore(fetch_one_absent(conn)) catch {
+    @mturso.TursoError::NoRows => no_rows = true
+    _ => ()
+  } noraise {
+    _ => ()
+  }
+  assert_true(no_rows)
+}
+
+///|
+async test "query 遇到多语句明确报错" {
+  let db = @mturso.Database::open(":memory:")
+  defer db.close()
+  let conn = db.connect()
+  defer conn.close()
+  let mut got = false
+  try ignore(conn.query("select 1; select 2")) catch {
+    _ => got = true
+  } noraise {
+    _ => ()
+  }
+  assert_true(got)
+}
+
 test "用已关闭的连接 → TursoError::ConnectionError" {
   let db = @mturso.Database::open(":memory:")
   let conn = db.connect()

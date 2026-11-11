@@ -12,6 +12,8 @@ pub fn conn_exec_stmt(Conn, Stmt) -> Int64
 
 pub fn conn_prepare(Conn, Bytes) -> Stmt
 
+pub fn conn_prepare_first(Conn, Bytes) -> Stmt
+
 pub fn conn_query(Conn, Bytes) -> Bytes
 
 pub fn conn_wait_job(Conn) -> Unit
@@ -39,6 +41,8 @@ pub fn stmt_bind_text(Stmt, Int32, Bytes) -> Unit
 pub fn stmt_column_count(Stmt) -> Int32
 
 pub fn stmt_deinit(Stmt) -> Unit
+
+pub fn stmt_tail(Stmt) -> Int64
 
 pub fn submit_exec(Conn, Bytes) -> Unit
 

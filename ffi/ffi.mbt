@@ -52,6 +52,15 @@ pub type Stmt
 pub extern "c" fn conn_prepare(conn : Conn, sql : Bytes) -> Stmt = "mturso_conn_prepare"
 
 ///|
+/// prepare_first：拿第一条语句；尾巴偏移存进 stmt（`stmt_tail` 读）。
+#borrow(conn, sql)
+pub extern "c" fn conn_prepare_first(conn : Conn, sql : Bytes) -> Stmt = "mturso_conn_prepare_first"
+
+///|
+#borrow(stmt)
+pub extern "c" fn stmt_tail(stmt : Stmt) -> Int64 = "mturso_stmt_tail"
+
+///|
 #borrow(stmt)
 pub extern "c" fn stmt_deinit(stmt : Stmt) = "mturso_stmt_deinit"
 
