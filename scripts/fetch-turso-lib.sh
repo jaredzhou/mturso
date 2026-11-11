@@ -27,12 +27,23 @@ case "$(uname -s)/$(uname -m)" in
   Linux/aarch64) SUB=linux_arm64;  LIB=libturso_sync_sdk_kit.so ;;
   Darwin/x86_64) SUB=darwin_amd64; LIB=libturso_sync_sdk_kit.dylib ;;
   Darwin/arm64)  SUB=darwin_arm64; LIB=libturso_sync_sdk_kit.dylib ;;
+  MINGW64_NT-*/x86_64 | MSYS_NT-*/x86_64 | CYGWIN_NT-*/x86_64)
+    SUB=windows_amd64
+    LIB=turso_sync_sdk_kit.dll
+    ;;
+  MINGW*/aarch64 | MSYS*/aarch64 | CYGWIN*/aarch64)
+    echo "Windows ARM64 暂不支持：v0.8.2 平台包中的 DLL 是 0 字节占位。" >&2
+    exit 1
+    ;;
   *) echo "不支持的平台: $(uname -s)/$(uname -m)" >&2; exit 1 ;;
 esac
 
 SRC="${TURSO_LIB_SRC:-}"
 if [ -z "$SRC" ]; then
   MODCACHE="${GOMODCACHE:-$(go env GOMODCACHE 2>/dev/null || true)}"
+  if command -v cygpath >/dev/null 2>&1; then
+    MODCACHE="$(cygpath -u "$MODCACHE")"
+  fi
   SRC="$MODCACHE/github.com/tursodatabase/turso-go-platform-libs@v0.8.2/libs/$SUB/$LIB"
 fi
 if [ ! -f "$SRC" ]; then

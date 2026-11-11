@@ -92,7 +92,7 @@ The platform file names are:
 | --- | --- |
 | Linux x86_64 / aarch64 | `libturso_sync_sdk_kit.so` |
 | macOS arm64 | `libturso_sync_sdk_kit.dylib` |
-| Windows x64 (planned) | `turso_sync_sdk_kit.dll` |
+| Windows x64 | `turso_sync_sdk_kit.dll` (vendored; Win32 stub pending #11) |
 
 `MTURSO_LIB_PATH` is an explicit file override. When it is unset, the lookup
 order is:
@@ -119,6 +119,8 @@ mkdir -p dist/libs
 cp /path/to/mturso/libs/libturso_sync_sdk_kit.so dist/libs/
 ./dist/your-app
 ```
+
+On Windows the deployed path is `<exe-dir>\libs\turso_sync_sdk_kit.dll`.
 
 Or point to it explicitly:
 
@@ -308,10 +310,11 @@ moon test  --target native      # run the test suite (28 tests)
 
 Do not run a bare `moon fmt` over the sources: this toolchain respells `Int` to `Int32`. If you do, revert with `sed -i 's/Int32/Int/g'` on the touched files.
 
-The Linux x86_64 Turso shared library is vendored in `libs/` with a `.sha256`.
-It is loaded at runtime, so neither the repo nor a consumer needs `-L`, `-l`,
-an rpath, or `LD_LIBRARY_PATH`. On another platform or architecture, fetch the
-matching library; the script only copies files and does not edit `moon.pkg`:
+The Linux x86_64 and Windows x64 Turso libraries are vendored in `libs/` with
+SHA-256 files. They are loaded at runtime, so neither the repo nor a consumer
+needs `-L`, `-l`, an rpath, or `LD_LIBRARY_PATH`. On another platform or
+architecture, fetch the matching library; the script only copies files and
+does not edit `moon.pkg`:
 
 ```bash
 bash scripts/fetch-turso-lib.sh
