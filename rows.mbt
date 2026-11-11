@@ -1,4 +1,4 @@
-// 流式行集：C 侧把结果按帧推进 pipe（布局见 `ffi/stub.c` 的 `stream_query_rows`），
+// 流式行集：C 侧把结果按帧推进 pipe（布局见 `ffi/stream.c` 的 `mturso_stream_stmt_rows`），
 // 这里从 `RawFdStream` **拉** —— 读一个、算一个，不物化。
 
 ///|

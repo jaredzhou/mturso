@@ -486,7 +486,7 @@ C API 是通用 SQL 接口，`BEGIN CONCURRENT` 只是普通语句。但 Go 的 
 ```moonbit
 // moon.pkg
 options(
-  "native-stub": ["stub.c"],
+  "native-stub": ["loader.c", "stream.c", "connection.c", "statement.c"],
   targets: { "ffi.mbt": ["native"] },
   link(native("cc-link-flags": ["-L/path/to/lib", "-lturso"])),
 )
@@ -600,7 +600,10 @@ moonpg 的卖点是 **“pure MoonBit, wire protocol from scratch, zero C depend
 ```
 moon.mod / moon.pkg     // preferred_target = "native"；native-stub + ffi 仅 native
 ffi.mbt                 // extern "c" 声明（仅 native）
-stub.c                  // moonbit.h 胶水：句柄包装、finalizer、字符串拷贝
+loader.c                // 动态库加载与 C ABI 函数表
+stream.c                // 结果 frame + pipe
+connection.c            // Database / Connection / worker 生命周期
+statement.c             // prepare / bind / execute
 turso.mbt               // 核心 trait：QueryExecutor / Rows / Tx / TxBeginner / Closer + TursoError
 conn.mbt                // Connection / connect() / PRAGMA 便捷入口
 row.mbt                 // Row / ExecResult / Row::get
@@ -681,7 +684,7 @@ pub async_io: bool,
 
    用途是「宿主自带事件循环（GUI 等），MoonBit 的 async loop 跑在专用线程，由宿主的 `poll` 驱动」。
    其中 `get_wakeup_callback_for_foreign_thread()` 是**官方认可的跨线程唤醒原语**，它的测试实现就是
-   **pipe**（Unix）/ **event**（Windows）。原文档还给了一条硬性约束，写 Turso 的 `stub.c` 时要照办：
+   **pipe**（Unix）/ **event**（Windows）。原文档还给了一条硬性约束，写 Turso 的 C shim 时要照办：
 
    > the returned wakeup callback will be invoked in a dedicated thread, so the callback **MUST NOT** do
    > anything other than invoking a C FFI function directly, and that invoked C FFI function must not
@@ -708,7 +711,7 @@ pub async_io: bool,
 
 推荐架构（各连接一个 actor，互不共享 Turso 句柄）：
 
-> ✅ **已在 `jaredzhou/mturso` 落地**（见仓库根的 `mturso.mbt` / `ffi/stub.c`）：
+> ✅ **已在 `jaredzhou/mturso` 落地**（见仓库根的 `mturso.mbt` / `ffi/*.c`）：
 > 每连接一个工作线程 + 门铃 pipe，`query`/`exec` 是 `async fn`；测试
 > `concurrent queries do not block the event loop` 断言了「sleep 任务在重查询仍在跑时就醒来」。
 > 下面是最初的设计草图。
@@ -751,7 +754,7 @@ MoonBit task ──(请求)──▶ C stub 队列 ──▶ 工作线程：turs
 | 来源 | 谁创建 | 用途 | 我们要不要管 |
 | --- | --- | --- | --- |
 | ① 运行时自带的工作线程池 | 运行时（`init_thread_pool_ffi`） | 它自己的阻塞 fd 操作（普通文件等） | **不用管**：把一个阻塞 fd 交给 `RawFd`/`RawFdStream` 就会自动用它 |
-| ② 我们在 `stub.c` 里起的线程 | 我们自己 | 跑 Turso 的阻塞 `prepare`/`step`/`run_io` | **要自己起**：运行时没有公开 API 把「任意阻塞函数」提交给它的池 |
+| ② 我们在 `ffi/connection.c` 里起的线程 | 我们自己 | 跑 Turso 的阻塞 `prepare`/`step`/`run_io` | **要自己起**：运行时没有公开 API 把「任意阻塞函数」提交给它的池 |
 | ③ `ExternalEventLoop` 模式下的 loop 线程 | 运行时 | 宿主自带 loop 时，把 MoonBit 的 loop 放到专用线程 | 不用管，只有那个模式才涉及 |
 
 为什么 Turso 蹭不到 ①：那个池只接受它自己内部的 `Job`（read/write/...），整个包在 `internal/` 下，
@@ -783,7 +786,7 @@ MoonBit task ──(请求)──▶ C stub 队列 ──▶ 工作线程：turs
 
 **而且 MoonBit 侧也没有现成的起线程 API**：`moonbitlang/core` 没有公开的 thread 包，
 `moonbitlang/async` 0.22.4 的公开接口里也没有 `spawn_blocking` / worker 之类的入口。
-所以这个工作线程只能在 **`stub.c` 里用 `pthread_create`（Windows 用 `CreateThread`/`_beginthreadex`）自己起**
+所以这个工作线程只能在 **`ffi/connection.c` 里用 `pthread_create`（Windows 用 `CreateThread`/`_beginthreadex`）自己起**
 ——这正好契合 MoonBit C 绑定用 `native-stub` 放 C 代码的写法。
 
 分工因此是清楚的：**`.so` 负责「谁调它就在谁的线程上阻塞做完」，线程、job 队列、结果槽、门铃 pipe 都是你的活**；
@@ -937,7 +940,7 @@ LD_LIBRARY_PATH="$SO_DIR" /tmp/mini_worker
 
 #### 最小形态与坑（确认整体形状）
 
-**C 侧（`stub.c`）**
+**C 侧（`ffi/*.c`）**
 
 - 每个连接一个工作线程 + 一个**结果槽** + 一个 pipe（Linux 上也可用 `eventfd`，天然合并计数）；
 - MoonBit 侧提交 job（SQL/参数拷进 job；注意 MoonBit `Bytes`/`String` 的生命周期）→ 唤醒工作线程；

@@ -85,7 +85,7 @@ options(
 
 ### Native dynamic library
 
-The engine is a native shared library loaded at runtime by `ffi/stub.c`. MoonBit
+The engine is a native shared library loaded at runtime by `ffi/loader.c`. MoonBit
 package files therefore need no `link`, `cc-link-flags`, `rpath`, or
 `LD_LIBRARY_PATH`.
 

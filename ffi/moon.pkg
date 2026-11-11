@@ -2,7 +2,13 @@
 supported_targets = "+native"
 
 options(
-  "native-stub": [ "stub.c" ],
-  // Turso 动态库由 stub.c 的 load_turso() 在运行期加载，不需要 link flags。
+  "native-stub": [
+    "errors.c",
+    "loader.c",
+    "stream.c",
+    "connection.c",
+    "statement.c",
+  ],
+  // Turso 动态库由 loader.c 的 load_turso() 在运行期加载，不需要 link flags。
   // $MTURSO_LIB_PATH 优先；否则 <mturso>/libs/ → <exe>/libs/ → ./libs/ → 系统路径。
 )

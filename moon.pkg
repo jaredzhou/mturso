@@ -30,4 +30,4 @@ options(
   ],
 )
 
-// Turso 动态库由 ffi/stub.c 在运行期加载，不需要 link flags。
+// Turso 动态库由 ffi/loader.c 在运行期加载，不需要 link flags。
