@@ -39,12 +39,6 @@ pub extern "c" fn conn_exec(conn : Conn, sql : Bytes) -> Int64 = "mturso_conn_ex
 #borrow(conn, sql)
 pub extern "c" fn conn_query(conn : Conn, sql : Bytes) -> Bytes = "mturso_conn_query"
 
-///|
-/// 流式行集：C 侧新建一条 pipe，worker 往写端推帧；返回**读端 fd**
-/// （**所有权转移**给调用方，只能接管一次；-1 = 失败）。
-#borrow(conn, sql)
-pub extern "c" fn submit_rows(conn : Conn, sql : Bytes) -> Int = "mturso_submit_rows"
-
 // ---------------------------------------------------------------------------
 // 语句句柄（薄壳）：prepare / bind_positional_* / deinit，全是 1:1 镜像。
 // ---------------------------------------------------------------------------

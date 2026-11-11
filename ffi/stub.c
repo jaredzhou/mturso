@@ -26,6 +26,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <unistd.h>
 
 #include "turso.h"
@@ -835,28 +836,6 @@ void mturso_submit_exec(mturso_conn_t *conn, moonbit_bytes_t sql) {
   submit_job(conn, sql, 0, -1);
 }
 
-// 异步：流式行集。新建一条 pipe，worker 往写端推帧，返回读端（所有权给 MoonBit；-1 = 失败）。
-MOONBIT_FFI_EXPORT
-int32_t mturso_submit_rows(mturso_conn_t *conn, moonbit_bytes_t sql) {
-  clear_err();
-  if (conn == NULL || conn->conn == NULL) {
-    set_err("connection is not open");
-    return -1;
-  }
-  int fds[2];
-  if (pipe(fds) != 0) {
-    set_err("failed to create result pipe");
-    return -1;
-  }
-  submit_job(conn, sql, 1, fds[1]);
-  if (g_err[0] != '\0') {
-    close(fds[0]);
-    close(fds[1]);
-    return -1;
-  }
-  return (int32_t)fds[0];
-}
-
 // 把门铃读端交给 MoonBit（RawFdStream 接管所有权）。只能拿一次。
 MOONBIT_FFI_EXPORT
 int32_t mturso_conn_bell_fd(mturso_conn_t *conn) {
@@ -1072,8 +1051,9 @@ int32_t mturso_submit_stmt_rows(mturso_conn_t *conn, mturso_stmt_t *stmt) {
     return -1;
   }
   int fds[2];
-  if (pipe(fds) != 0) {
-    set_err("failed to create result pipe");
+  // 双向通道（socketpair）；现在只用于结果帧，将来请求也可以走它。
+  if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0) {
+    set_err("failed to create result channel");
     return -1;
   }
   if (submit_stmt_job(conn, stmt->stmt, fds[1]) != 0) {

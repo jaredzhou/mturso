@@ -44,8 +44,6 @@ pub fn submit_exec(Conn, Bytes) -> Unit
 
 pub fn submit_query(Conn, Bytes) -> Unit
 
-pub fn submit_rows(Conn, Bytes) -> Int32
-
 pub fn submit_stmt_rows(Conn, Stmt) -> Int32
 
 pub fn take_exec(Conn) -> Int64
