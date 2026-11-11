@@ -2,7 +2,7 @@
 // 形状确认后再一对一搬进根包 / value 子包。
 import {
   "jaredzhou/mturso/design/value",
-  "moonbitlang/async",
+  "moonbitlang/core/async",
   "moonbitlang/core/json",
 }
 
@@ -17,3 +17,7 @@ supported_targets = "+native"
 //                               —— 设计稿里没人构造、没人用到的包
 
 warnings = "-1-6-20-24-29-53-67-68-79-92"
+
+options(
+  "allow-experimental-packages": [ "moonbitlang/core/async" ],
+)

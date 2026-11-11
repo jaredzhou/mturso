@@ -50,8 +50,8 @@ pub async fn Database::connect(Self) -> Connection raise TursoError
 pub fn Database::default_tx_mode(Self) -> TxMode
 pub async fn Database::execute(Self, String, params? : Array[&ToValue]) -> ExecResult raise TursoError
 pub fn Database::is_closed(Self) -> Bool
-pub fn Database::max_conns(Self) -> Int32
-pub fn Database::open(String, max_conns? : Int32) -> Self raise TursoError
+pub fn Database::max_conns(Self) -> Int
+pub fn Database::open(String, max_conns? : Int) -> Self raise TursoError
 pub async fn Database::query(Self, String, params? : Array[&ToValue]) -> &Rows raise TursoError
 pub async fn Database::query_one(Self, String, params? : Array[&ToValue]) -> Row raise TursoError
 pub fn Database::set_default_tx_mode(Self, TxMode) -> Unit
@@ -70,7 +70,7 @@ pub impl QueryExecutor for DbTx
 pub impl Tx for DbTx
 
 pub type ExecResult
-pub fn ExecResult::affected_rows(Self) -> Int32
+pub fn ExecResult::affected_rows(Self) -> Int
 pub fn ExecResult::close(Self) -> Unit
 
 #derive(Eq, @debug.Debug)
@@ -88,10 +88,10 @@ pub(all) struct PoolStats {
 
 #derive(Eq, @debug.Debug)
 pub(all) struct RetryOptions {
-  attempts : Int32
-  base_delay_ms : Int32
-  max_delay_ms : Int32
-  budget_ms : Int32?
+  attempts : Int
+  base_delay_ms : Int
+  max_delay_ms : Int
+  budget_ms : Int?
 }
 pub fn RetryOptions::default() -> Self
 
@@ -100,11 +100,11 @@ pub struct Row {
   columns : Array[@value.Column]
 }
 pub fn Row::columns(Self) -> Array[@value.Column]
-pub fn[T : FromValue] Row::get(Self, Int32) -> T raise TursoError
+pub fn[T : FromValue] Row::get(Self, Int) -> T raise TursoError
 pub fn[T : FromValue] Row::get_by_name(Self, String) -> T raise TursoError
-pub fn Row::len(Self) -> Int32
-pub fn Row::value(Self, Int32) -> @value.Value
-pub fn Row::value_raw(Self, Int32) -> Bytes
+pub fn Row::len(Self) -> Int
+pub fn Row::value(Self, Int) -> @value.Value
+pub fn Row::value_raw(Self, Int) -> Bytes
 
 #derive(Eq, @debug.Debug)
 pub(all) struct Timestamp(String)
@@ -142,10 +142,10 @@ pub(open) trait FromRow {
 pub impl FromRow for Bool
 pub impl FromRow for Byte
 pub impl FromRow for Char
-pub impl FromRow for Int32
+pub impl FromRow for Int
 pub impl FromRow for Int16
 pub impl FromRow for Int64
-pub impl FromRow for UInt32
+pub impl FromRow for UInt
 pub impl FromRow for UInt16
 pub impl FromRow for UInt64
 pub impl FromRow for Float
@@ -168,10 +168,10 @@ pub(open) trait FromValue {
 pub impl FromValue for Bool
 pub impl FromValue for Byte
 pub impl FromValue for Char
-pub impl FromValue for Int32
+pub impl FromValue for Int
 pub impl FromValue for Int16
 pub impl FromValue for Int64
-pub impl FromValue for UInt32
+pub impl FromValue for UInt
 pub impl FromValue for UInt16
 pub impl FromValue for UInt64
 pub impl FromValue for Float
@@ -206,10 +206,10 @@ pub impl ToValue for Unit
 pub impl ToValue for Bool
 pub impl ToValue for Byte
 pub impl ToValue for Char
-pub impl ToValue for Int32
+pub impl ToValue for Int
 pub impl ToValue for Int16
 pub impl ToValue for Int64
-pub impl ToValue for UInt32
+pub impl ToValue for UInt
 pub impl ToValue for UInt16
 pub impl ToValue for UInt64
 pub impl ToValue for Float

@@ -4,7 +4,7 @@ package "jaredzhou/mturso"
 import {
   "jaredzhou/mturso/ffi",
   "jaredzhou/mturso/value",
-  "moonbitlang/async/raw_fd",
+  "moonbitlang/core/async/raw_fd",
   "moonbitlang/core/debug",
   "moonbitlang/core/json",
   "moonbitlang/core/ref",

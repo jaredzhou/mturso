@@ -66,7 +66,6 @@ Your `moon.mod`:
 
 ```toml
 import {
-  "moonbitlang/async@0.22.4",
   "jaredzhou/mturso@0.1.0",
 }
 ```
@@ -76,8 +75,12 @@ Your package's `moon.pkg` only needs the import:
 ```moonbit
 import {
   "jaredzhou/mturso",
-  "moonbitlang/async",
+  "moonbitlang/core/async",
 }
+
+options(
+  "allow-experimental-packages": [ "moonbitlang/core/async" ],
+)
 ```
 
 ### Native dynamic library
