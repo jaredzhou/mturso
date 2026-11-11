@@ -875,3 +875,135 @@ moonbit_bytes_t mturso_last_error(void) {
 // 上一条错误的分类（0 = 无错误；见 MTURSO_ERR_*）。
 MOONBIT_FFI_EXPORT
 int32_t mturso_last_error_kind(void) { return (int32_t)g_kind; }
+
+// ---------------------------------------------------------------------------
+// 语句句柄：thin 1:1 mirror of turso_statement_*. MoonBit prepares and binds;
+// C stores nothing of its own.
+// ---------------------------------------------------------------------------
+
+typedef struct {
+  turso_statement_t *stmt;
+} mturso_stmt_t;
+
+static void stmt_finalize(void *self) {
+  mturso_stmt_t *h = (mturso_stmt_t *)self;
+  if (h->stmt != NULL) {
+    turso_statement_deinit(h->stmt);
+    h->stmt = NULL;
+  }
+}
+
+MOONBIT_FFI_EXPORT
+mturso_stmt_t *mturso_conn_prepare(mturso_conn_t *conn, moonbit_bytes_t sql) {
+  clear_err();
+  mturso_stmt_t *h =
+      (mturso_stmt_t *)moonbit_make_external_object(stmt_finalize, sizeof(mturso_stmt_t));
+  memset(h, 0, sizeof(mturso_stmt_t));
+  if (conn == NULL || conn->conn == NULL) {
+    set_err("connection is not open");
+    return h;
+  }
+  const char *err = NULL;
+  turso_status_code_t st =
+      turso_connection_prepare_single(conn->conn, (const char *)sql, &h->stmt, &err);
+  if (st != TURSO_OK) {
+    set_err_kind(err, kind_from_status(st));
+  }
+  return h;
+}
+
+MOONBIT_FFI_EXPORT
+void mturso_stmt_deinit(mturso_stmt_t *stmt) {
+  if (stmt == NULL || stmt->stmt == NULL) {
+    return;
+  }
+  turso_statement_deinit(stmt->stmt);
+  stmt->stmt = NULL;
+}
+
+MOONBIT_FFI_EXPORT
+int64_t mturso_stmt_column_count(mturso_stmt_t *stmt) {
+  if (stmt == NULL || stmt->stmt == NULL) {
+    return 0;
+  }
+  return turso_statement_column_count(stmt->stmt);
+}
+
+static void stmt_bind_result(turso_status_code_t st) {
+  if (st != TURSO_OK) {
+    set_err_kind("failed to bind parameter", MTURSO_ERR_QUERY);
+  }
+}
+
+MOONBIT_FFI_EXPORT
+void mturso_stmt_bind_null(mturso_stmt_t *stmt, int32_t pos) {
+  clear_err();
+  if (stmt == NULL || stmt->stmt == NULL) {
+    set_err("statement is not open");
+    return;
+  }
+  stmt_bind_result(turso_statement_bind_positional_null(stmt->stmt, (size_t)pos));
+}
+
+MOONBIT_FFI_EXPORT
+void mturso_stmt_bind_int(mturso_stmt_t *stmt, int32_t pos, int64_t value) {
+  clear_err();
+  if (stmt == NULL || stmt->stmt == NULL) {
+    set_err("statement is not open");
+    return;
+  }
+  stmt_bind_result(turso_statement_bind_positional_int(stmt->stmt, (size_t)pos, value));
+}
+
+MOONBIT_FFI_EXPORT
+void mturso_stmt_bind_double(mturso_stmt_t *stmt, int32_t pos, double value) {
+  clear_err();
+  if (stmt == NULL || stmt->stmt == NULL) {
+    set_err("statement is not open");
+    return;
+  }
+  stmt_bind_result(turso_statement_bind_positional_double(stmt->stmt, (size_t)pos, value));
+}
+
+MOONBIT_FFI_EXPORT
+void mturso_stmt_bind_text(mturso_stmt_t *stmt, int32_t pos, moonbit_bytes_t value) {
+  clear_err();
+  if (stmt == NULL || stmt->stmt == NULL) {
+    set_err("statement is not open");
+    return;
+  }
+  stmt_bind_result(turso_statement_bind_positional_text(
+      stmt->stmt, (size_t)pos, (const char *)value, (size_t)Moonbit_array_length(value)));
+}
+
+MOONBIT_FFI_EXPORT
+void mturso_stmt_bind_blob(mturso_stmt_t *stmt, int32_t pos, moonbit_bytes_t value) {
+  clear_err();
+  if (stmt == NULL || stmt->stmt == NULL) {
+    set_err("statement is not open");
+    return;
+  }
+  stmt_bind_result(turso_statement_bind_positional_blob(
+      stmt->stmt, (size_t)pos, (const char *)value, (size_t)Moonbit_array_length(value)));
+}
+
+// 同步跑一条已经 prepare+bind 好的语句到 DONE，返回受影响行数。
+MOONBIT_FFI_EXPORT
+int64_t mturso_conn_exec_stmt(mturso_conn_t *conn, mturso_stmt_t *stmt) {
+  clear_err();
+  if (conn == NULL || conn->conn == NULL) {
+    set_err("connection is not open");
+    return -1;
+  }
+  if (stmt == NULL || stmt->stmt == NULL) {
+    set_err("statement is not open");
+    return -1;
+  }
+  const char *err = NULL;
+  int kind = MTURSO_ERR_NONE;
+  if (step_to_done(stmt->stmt, &err, &kind) != 0) {
+    set_err_kind(err, kind);
+    return -1;
+  }
+  return turso_statement_n_change(stmt->stmt);
+}

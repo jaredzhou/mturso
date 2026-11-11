@@ -111,6 +111,38 @@ async test "类型化行集：整数/浮点/文本/blob/null 按类型取到，�
 }
 
 ///|
+async test "参数绑定：单个 / 多个 / NULL，结果与字面量一致" {
+  let db = @mturso.Database::open(":memory:")
+  let conn = db.connect()
+  defer conn.close()
+  defer db.close()
+  ignore(
+    conn.exec_blocking(
+      "create table t(a integer, b text, c blob, d integer, e real)",
+    ),
+  )
+  let n = conn.exec_params(
+    "insert into t values (?1, ?2, ?3, ?4, ?5)",
+    params=[(42 : Int), "hi", b"\x01\x02", (None : Int?), 1.5],
+  )
+  assert_true(n == 1L)
+
+  let rows = conn.query_rows("select a, b, c, d, e from t")
+  defer rows.close()
+  assert_true(rows.has_next())
+  let row = rows.get_row()
+  let a : Int = row.get(0)
+  assert_true(a == 42)
+  let b : String = row.get(1)
+  assert_true(b == "hi")
+  let c : Bytes = row.get(2)
+  assert_true(c == b"\x01\x02")
+  assert_true(row.value(3) == @mturso.Value::Null)
+  let e : Double = row.get(4)
+  assert_true(e == 1.5)
+}
+
+///|
 test "用已关闭的连接 → TursoError::ConnectionError" {
   let db = @mturso.Database::open(":memory:")
   let conn = db.connect()

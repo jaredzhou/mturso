@@ -45,6 +45,50 @@ pub extern "c" fn conn_query(conn : Conn, sql : Bytes) -> Bytes = "mturso_conn_q
 #borrow(conn, sql)
 pub extern "c" fn submit_rows(conn : Conn, sql : Bytes) -> Int = "mturso_submit_rows"
 
+// ---------------------------------------------------------------------------
+// 语句句柄（薄壳）：prepare / bind_positional_* / deinit，全是 1:1 镜像。
+// ---------------------------------------------------------------------------
+
+///|
+/// 不透明的语句句柄。
+pub type Stmt
+
+///|
+#borrow(conn, sql)
+pub extern "c" fn conn_prepare(conn : Conn, sql : Bytes) -> Stmt = "mturso_conn_prepare"
+
+///|
+#borrow(stmt)
+pub extern "c" fn stmt_deinit(stmt : Stmt) = "mturso_stmt_deinit"
+
+///|
+#borrow(stmt)
+pub extern "c" fn stmt_column_count(stmt : Stmt) -> Int = "mturso_stmt_column_count"
+
+///|
+#borrow(stmt)
+pub extern "c" fn stmt_bind_null(stmt : Stmt, pos : Int) = "mturso_stmt_bind_null"
+
+///|
+#borrow(stmt)
+pub extern "c" fn stmt_bind_int(stmt : Stmt, pos : Int, value : Int64) = "mturso_stmt_bind_int"
+
+///|
+#borrow(stmt)
+pub extern "c" fn stmt_bind_double(stmt : Stmt, pos : Int, value : Double) = "mturso_stmt_bind_double"
+
+///|
+#borrow(stmt, value)
+pub extern "c" fn stmt_bind_text(stmt : Stmt, pos : Int, value : Bytes) = "mturso_stmt_bind_text"
+
+///|
+#borrow(stmt, value)
+pub extern "c" fn stmt_bind_blob(stmt : Stmt, pos : Int, value : Bytes) = "mturso_stmt_bind_blob"
+
+///|
+#borrow(conn, stmt)
+pub extern "c" fn conn_exec_stmt(conn : Conn, stmt : Stmt) -> Int64 = "mturso_conn_exec_stmt"
+
 ///|
 /// 显式关闭连接（幂等）。
 #borrow(conn)
