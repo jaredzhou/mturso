@@ -29,6 +29,7 @@ pub(all) suberror ValueError {
 pub struct Connection {
   db : Database
   raw : @ffi.Conn
+  closed : @ref.Ref[Bool]
 }
 pub fn Connection::close(Self) -> Unit
 pub fn Connection::exec_blocking(Self, String) -> Int64 raise TursoError
@@ -36,9 +37,11 @@ pub fn Connection::exec_params(Self, String, params? : Array[&ToValue]) -> Int64
 pub async fn Connection::execute(Self, String, params? : Array[&ToValue]) -> ExecResult raise TursoError
 pub async fn[T : FromRow] Connection::fetch(Self, String, params? : Array[&ToValue]) -> Array[T] raise TursoError
 pub async fn[T : FromRow] Connection::fetch_one(Self, String, params? : Array[&ToValue]) -> T raise TursoError
+pub fn Connection::is_closed(Self) -> Bool
+pub fn Connection::last_insert_rowid(Self) -> Int64 raise TursoError
 pub async fn Connection::query(Self, String, params? : Array[&ToValue]) -> &Rows raise TursoError
 pub async fn Connection::query_one(Self, String, params? : Array[&ToValue]) -> Row raise TursoError
-pub impl Closer for Connection
+pub async fn Connection::sqlite_version(Self) -> String raise TursoError
 pub impl Fetching for Connection
 pub impl QueryExecutor for Connection
 

@@ -300,3 +300,28 @@ test "用已关闭的连接 → TursoError::ConnectionError" {
   assert_true(got)
   db.close()
 }
+
+///|
+async test "观测方法：is_closed / last_insert_rowid / sqlite_version" {
+  let db = @mturso.Database::open(":memory:")
+  defer db.close()
+  let conn = db.connect()
+  assert_true(!conn.is_closed())
+  ignore(conn.execute("create table t(id integer primary key, v integer)"))
+  ignore(conn.execute("insert into t(v) values (7)"))
+  assert_true(conn.last_insert_rowid() == 1L)
+  assert_true(conn.sqlite_version() == "3.50.4")
+
+  conn.close()
+  assert_true(conn.is_closed())
+  conn.close() // 幂等
+
+  let mut got = false
+  try ignore(conn.query("select 1")) catch {
+    @mturso.TursoError::ConnectionError(_) => got = true
+    _ => ()
+  } noraise {
+    _ => ()
+  }
+  assert_true(got)
+}

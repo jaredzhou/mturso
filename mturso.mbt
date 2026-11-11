@@ -26,6 +26,7 @@ pub struct Database {
 pub struct Connection {
   db : Database
   raw : @ffi.Conn
+  closed : Ref[Bool]
 }
 
 ///|
@@ -61,7 +62,7 @@ pub fn Database::open(path : String) -> Database raise TursoError {
 pub fn Database::connect(self : Database) -> Connection raise TursoError {
   let raw = @ffi.db_connect(self.raw)
   check_error()
-  { db: self, raw, }
+  { db: self, raw, closed: Ref(false), }
 }
 
 ///|
@@ -73,7 +74,42 @@ pub fn Database::close(self : Database) -> Unit {
 ///|
 /// 关闭连接（幂等；会唤醒并回收它的 worker 线程）。
 pub fn Connection::close(self : Connection) -> Unit {
-  @ffi.conn_close(self.raw)
+  if !self.closed.val {
+    self.closed.val = true
+    @ffi.conn_close(self.raw)
+  }
+}
+
+///|
+/// 连接是否已关闭。
+pub fn Connection::is_closed(self : Connection) -> Bool {
+  self.closed.val
+}
+
+///|
+/// 最近一次 INSERT 生成的 rowid。
+pub fn Connection::last_insert_rowid(self : Connection) -> Int64 raise TursoError {
+  if self.closed.val {
+    raise TursoError::ConnectionError("connection is closed")
+  }
+  let v = @ffi.conn_last_insert_rowid(self.raw)
+  check_error()
+  v
+}
+
+///|
+/// 引擎自报的 SQLite 兼容版本（兼容性伪装，不是 Turso 自己的版本号）。
+pub async fn Connection::sqlite_version(
+  self : Connection,
+) -> String raise TursoError {
+  let rows = self.query("select sqlite_version()")
+  defer rows.close()
+  if rows.has_next() {
+    let row = rows.get_row()
+    let v : String = row.get(0)
+    return v
+  }
+  raise TursoError::QueryError("sqlite_version returned no rows")
 }
 
 ///|

@@ -705,11 +705,33 @@ mturso_conn_t *mturso_db_connect(mturso_db_t *db) {
 
 MOONBIT_FFI_EXPORT
 void mturso_conn_close(mturso_conn_t *conn) {
-  if (conn == NULL || conn->conn == NULL) {
+  if (conn == NULL) {
     return;
   }
-  turso_connection_deinit(conn->conn);
-  conn->conn = NULL;
+  // 确定性停掉并 join worker（不依赖 GC finalizer）。若此刻有语句在飞，
+  // pthread_join 会等它跑完 —— Turso 没有跨线程取消 API，这是唯一安全策略。
+  if (conn->worker_started) {
+    pthread_mutex_lock(&conn->mu);
+    conn->shutdown = 1;
+    pthread_cond_signal(&conn->cv);
+    pthread_mutex_unlock(&conn->mu);
+    pthread_join(conn->worker, NULL);
+    conn->worker_started = 0;
+  }
+  if (conn->conn != NULL) {
+    turso_connection_deinit(conn->conn);
+    conn->conn = NULL;
+  }
+}
+
+MOONBIT_FFI_EXPORT
+int64_t mturso_conn_last_insert_rowid(mturso_conn_t *conn) {
+  clear_err();
+  if (conn == NULL || conn->conn == NULL) {
+    set_err("connection is not open");
+    return 0;
+  }
+  return turso_connection_last_insert_rowid(conn->conn);
 }
 
 // ---- 同步路径（在调用线程上跑） ----

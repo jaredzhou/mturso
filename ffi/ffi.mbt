@@ -103,6 +103,12 @@ pub extern "c" fn submit_stmt_rows(conn : Conn, stmt : Stmt) -> Int = "mturso_su
 pub extern "c" fn conn_wait_job(conn : Conn) = "mturso_conn_wait_job"
 
 ///|
+/// 最近一次 INSERT 的 rowid。
+#borrow(conn)
+pub extern "c" fn conn_last_insert_rowid(conn : Conn) -> Int64 =
+  "mturso_conn_last_insert_rowid"
+
+///|
 /// 显式关闭连接（幂等）。
 #borrow(conn)
 pub extern "c" fn conn_close(conn : Conn) = "mturso_conn_close"
