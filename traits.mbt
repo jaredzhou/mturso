@@ -31,6 +31,22 @@ pub fn[T : FromValue] Row::get(self : Row, index : Int) -> T raise TursoError {
 }
 
 ///|
+/// 按列名取值。找不到列时抛 `TursoError::QueryError`。
+pub fn[T : FromValue] Row::get_by_name(
+  self : Row,
+  name : String,
+) -> T raise TursoError {
+  let mut i = 0
+  for col in self.columns {
+    if col.name == name {
+      return self.get(i)
+    }
+    i = i + 1
+  }
+  raise TursoError::QueryError("column not found: \{name}")
+}
+
+///|
 /// 取下标的原始 `Value`（不抛——想精确区分类型的人用这个）。
 pub fn Row::value(self : Row, index : Int) -> @value.Value {
   self.values[index]

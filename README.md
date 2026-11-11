@@ -279,9 +279,12 @@ async fn demo(conn : @mturso.Connection) -> Unit raise @mturso.TursoError {
 | `Database::query/query_one/execute` | Implicit acquire → run → release |
 | `Database::begin_tx(opts?)` | Pooled transaction (`DbTx`, released on commit/rollback) |
 | `Database::stats()/max_conns()/is_closed()` | Pool observability |
+| `Database::set_journal_mode(Wal/Mvcc)/set_default_tx_mode()` | File-level journal mode and default transaction mode |
 | `Database::close()` | Idempotent; cascades to every connection, then deinits |
+| `Connection::open(path)` | Convenience connection backed by a private `max_conns=1` database |
 | `Connection::query/query_one/execute` | **async**; typed, streaming rows / `ExecResult` |
 | `Connection::fetch/fetch_one` | Typed collection via `FromRow` |
+| `Row::get/get_by_name/value/value_raw` | Typed, by-name, raw-value, or exact-byte column access |
 | `Connection::begin_tx(opts?)` | `DbTx` |
 | `Connection::close()` | Return the connection to the pool (idempotent) |
 | `Connection::last_insert_rowid()/sqlite_version()/is_closed()` | Observability |
@@ -305,7 +308,7 @@ async fn demo(conn : @mturso.Connection) -> Unit raise @mturso.TursoError {
 
 ```bash
 moon check --target native      # type check
-moon test  --target native      # run the test suite (28 tests)
+moon test  --target native      # run the test suite (36 tests)
 ```
 
 Do not run a bare `moon fmt` over the sources: this toolchain respells `Int` to `Int32`. If you do, revert with `sed -i 's/Int32/Int/g'` on the touched files.

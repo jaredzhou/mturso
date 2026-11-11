@@ -10,29 +10,39 @@
 pub using @value { type Value, type Column }
 
 ///|
+/// Turso 支持的 journal mode。它是库/文件级属性，不是单连接属性。
+pub(all) enum JournalMode {
+  Wal
+  Mvcc
+} derive(Eq, Debug)
+
+///|
 /// 数据库句柄 = 一个连接池（见 ADR-0001）。
 ///
 /// - `idle`：空闲连接的裸句柄（复用）；
 /// - `busy`：借出中的裸句柄；`None` 是墓碑（已归还，槽位留着让索引稳定）；
 /// - `sem`：`max_conns` 个许可，`connect()` 满了会等。
 pub struct Database {
-  raw : @ffi.Db
-  max_conns : Int
-  idle : Array[@ffi.Conn]
-  idle_len : Ref[Int]
-  busy : Array[@ffi.Conn?]
-  sem : @async.Semaphore
-  stats : Ref[PoolStats]
-  closed : Ref[Bool]
+  priv raw : @ffi.Db
+  priv max_conns : Int
+  priv idle : Array[@ffi.Conn]
+  priv idle_len : Ref[Int]
+  priv busy : Array[@ffi.Conn?]
+  priv sem : @async.Semaphore
+  priv stats : Ref[PoolStats]
+  priv journal_mode : Ref[JournalMode]
+  priv default_tx_mode : Ref[TxMode]
+  priv closed : Ref[Bool]
 }
 
 ///|
 /// 连接句柄（池里的一次 checkout）。
 pub struct Connection {
-  db : Database
-  raw : @ffi.Conn
-  busy_index : Int
-  closed : Ref[Bool]
+  priv db : Database
+  priv raw : @ffi.Conn
+  priv busy_index : Int
+  priv mut owns_db : Bool
+  priv closed : Ref[Bool]
 }
 
 ///|
@@ -51,7 +61,14 @@ fn kind_to_error(kind : Int, msg : String) -> TursoError {
     2 => TursoError::Busy(msg)
     3 => TursoError::Conflict(msg)
     4 => TursoError::ConnectionError(msg)
-    _ => TursoError::QueryError(msg)
+    _ =>
+      // Turso 0.8.2 maps WriteWriteConflict to generic TURSO_ERROR instead of
+      // TURSO_BUSY_SNAPSHOT; normalize the engine's exact message here.
+      if msg == "Write-write conflict" {
+        TursoError::Conflict(msg)
+      } else {
+        TursoError::QueryError(msg)
+      }
   }
 }
 
@@ -69,8 +86,21 @@ pub fn Database::open(path : String, max_conns? : Int = 4) -> Database raise Tur
     busy: [],
     sem: @async.Semaphore::Semaphore(n),
     stats: Ref({ acquire_count: 0L, acquire_wait_count: 0L, acquire_wait_duration_ms: 0L }),
+    journal_mode: Ref(JournalMode::Wal),
+    default_tx_mode: Ref(TxMode::Deferred),
     closed: Ref(false),
   }
+}
+
+///|
+/// 只打开一条连接。内部持有 `max_conns = 1` 的私有 Database；关闭连接时
+/// 私有 Database 也一起关闭。
+pub async fn Connection::open(path : String) -> Connection raise TursoError {
+  let db = Database::open(path, max_conns=1)
+  errdefer db.close()
+  let conn = db.connect()
+  conn.owns_db = true
+  conn
 }
 
 ///|
@@ -107,7 +137,7 @@ pub async fn Database::connect(self : Database) -> Connection raise TursoError {
   }
   let idx = self.busy.length()
   self.busy.push(Some(raw))
-  { db: self, raw, busy_index: idx, closed: Ref(false), }
+  { db: self, raw, busy_index: idx, owns_db: false, closed: Ref(false), }
 }
 
 ///|
@@ -117,6 +147,10 @@ pub fn Connection::close(self : Connection) -> Unit {
     return
   }
   self.closed.val = true
+  if self.owns_db {
+    self.db.close()
+    return
+  }
   if self.db.closed.val {
     return
   }
@@ -207,4 +241,45 @@ pub fn Database::close(self : Database) -> Unit {
 /// 数据库是否已关闭。
 pub fn Database::is_closed(self : Database) -> Bool {
   self.closed.val
+}
+
+///|
+/// 设置库级 journal mode，并联动默认事务模式：Mvcc → Concurrent，
+/// Wal → Deferred。
+pub fn Database::set_journal_mode(
+  self : Database,
+  mode : JournalMode,
+) -> Unit raise TursoError {
+  if self.closed.val {
+    raise TursoError::ConnectionError("database is closed")
+  }
+  if self.journal_mode.val == mode {
+    return
+  }
+  let raw = @ffi.db_connect(self.raw)
+  defer @ffi.conn_close(raw)
+  check_error()
+  let pragma = match mode {
+    JournalMode::Wal => "pragma journal_mode=wal"
+    JournalMode::Mvcc => "pragma journal_mode=mvcc"
+  }
+  ignore(@ffi.conn_exec(raw, @utf8.encode(pragma)))
+  check_error()
+  self.journal_mode.val = mode
+  self.default_tx_mode.val = match mode {
+    JournalMode::Wal => TxMode::Deferred
+    JournalMode::Mvcc => TxMode::Concurrent
+  }
+}
+
+///|
+/// 覆盖后续 `begin_tx(mode=None)` 使用的默认事务模式。
+pub fn Database::set_default_tx_mode(self : Database, mode : TxMode) -> Unit {
+  self.default_tx_mode.val = mode
+}
+
+///|
+/// 当前默认事务模式。
+pub fn Database::default_tx_mode(self : Database) -> TxMode {
+  self.default_tx_mode.val
 }

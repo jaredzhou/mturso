@@ -49,6 +49,13 @@ declare pub fn Database::stats(self : Database) -> PoolStats
 // Connection
 
 ///|
+/// 只打开一条连接：内部持有 `max_conns = 1` 的私有 Database，关闭连接时
+/// 私有 Database 也一起关闭。
+declare pub async fn Connection::open(
+  path : String,
+) -> Connection raise TursoError
+
+///|
 /// 关闭连接 = **还回池**（幂等；不是销毁）。
 declare pub fn Connection::close(self : Connection) -> Unit
 

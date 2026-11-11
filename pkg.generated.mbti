@@ -5,7 +5,6 @@ import {
   "jaredzhou/mturso/ffi",
   "jaredzhou/mturso/value",
   "moonbitlang/async/raw_fd",
-  "moonbitlang/async/semaphore",
   "moonbitlang/core/debug",
   "moonbitlang/core/json",
   "moonbitlang/core/ref",
@@ -31,10 +30,7 @@ pub(all) suberror ValueError {
 
 // Types and methods
 pub struct Connection {
-  db : Database
-  raw : @ffi.Conn
-  busy_index : Int
-  closed : @ref.Ref[Bool]
+  // private fields
 }
 pub async fn Connection::begin_tx(Self, opts? : TxOptions) -> DbTx raise TursoError
 pub fn Connection::close(Self) -> Unit
@@ -45,6 +41,7 @@ pub async fn[T : FromRow] Connection::fetch(Self, String, params? : Array[&ToVal
 pub async fn[T : FromRow] Connection::fetch_one(Self, String, params? : Array[&ToValue]) -> T raise TursoError
 pub fn Connection::is_closed(Self) -> Bool
 pub fn Connection::last_insert_rowid(Self) -> Int64 raise TursoError
+pub async fn Connection::open(String) -> Self raise TursoError
 pub async fn Connection::query(Self, String, params? : Array[&ToValue]) -> &Rows raise TursoError
 pub async fn Connection::query_one(Self, String, params? : Array[&ToValue]) -> Row raise TursoError
 pub async fn Connection::sqlite_version(Self) -> String raise TursoError
@@ -53,32 +50,26 @@ pub impl QueryExecutor for Connection
 pub impl TxBeginner for Connection
 
 pub struct Database {
-  raw : @ffi.Db
-  max_conns : Int
-  idle : Array[@ffi.Conn]
-  idle_len : @ref.Ref[Int]
-  busy : Array[@ffi.Conn?]
-  sem : @semaphore.Semaphore
-  stats : @ref.Ref[PoolStats]
-  closed : @ref.Ref[Bool]
+  // private fields
 }
 pub async fn Database::begin_tx(Self, opts? : TxOptions) -> DbTx raise TursoError
 pub fn Database::close(Self) -> Unit
 pub async fn Database::connect(Self) -> Connection raise TursoError
+pub fn Database::default_tx_mode(Self) -> TxMode
 pub async fn Database::execute(Self, String, params? : Array[&ToValue]) -> ExecResult raise TursoError
 pub fn Database::is_closed(Self) -> Bool
 pub fn Database::max_conns(Self) -> Int
 pub fn Database::open(String, max_conns? : Int) -> Self raise TursoError
 pub async fn Database::query(Self, String, params? : Array[&ToValue]) -> &Rows raise TursoError
 pub async fn Database::query_one(Self, String, params? : Array[&ToValue]) -> Row raise TursoError
+pub fn Database::set_default_tx_mode(Self, TxMode) -> Unit
+pub fn Database::set_journal_mode(Self, JournalMode) -> Unit raise TursoError
 pub fn Database::stats(Self) -> PoolStats
 pub impl QueryExecutor for Database
 pub impl TxBeginner for Database
 
 pub struct DbTx {
-  conn : Connection
-  done : @ref.Ref[Bool]
-  release_pool_conn : Bool
+  // private fields
 }
 pub async fn DbTx::commit(Self) -> Unit raise TursoError
 pub async fn DbTx::execute(Self, String, params? : Array[&ToValue]) -> ExecResult raise TursoError
@@ -92,6 +83,11 @@ pub struct ExecResult {
   changes : Int64
 }
 pub fn ExecResult::affected_rows(Self) -> Int
+
+pub(all) enum JournalMode {
+  Wal
+  Mvcc
+} derive(Eq, @debug.Debug)
 
 pub(all) struct PoolStats {
   acquire_count : Int64
@@ -132,6 +128,7 @@ pub struct Row {
 }
 pub fn Row::columns(Self) -> Array[@value.Column]
 pub fn[T : FromValue] Row::get(Self, Int) -> T raise TursoError
+pub fn[T : FromValue] Row::get_by_name(Self, String) -> T raise TursoError
 pub fn Row::len(Self) -> Int
 pub fn Row::value(Self, Int) -> @value.Value
 pub fn Row::value_raw(Self, Int) -> Bytes

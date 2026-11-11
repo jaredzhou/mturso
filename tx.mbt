@@ -44,10 +44,19 @@ pub(open) trait TxBeginner {
 ///|
 /// 具体事务。`begin_tx` 返回它，所以事务里的调用都是 dot 调用。
 pub struct DbTx {
-  conn : Connection
-  done : Ref[Bool]
+  priv conn : Connection
+  priv done : Ref[Bool]
+  priv read_only : Bool
   /// 池上开的事务：commit/rollback 后把连接还回池。
-  release_pool_conn : Bool
+  priv release_pool_conn : Bool
+}
+
+///|
+fn DbTx::ensure_active(self : DbTx) -> Unit raise TursoError {
+  if self.done.val {
+    raise TursoError::QueryError("transaction already finished")
+  }
+  self.conn.ensure_open()
 }
 
 ///|
@@ -56,6 +65,7 @@ pub impl QueryExecutor for DbTx with query(
   sql : String,
   params? : Array[&ToValue],
 ) -> &Rows raise TursoError {
+  self.ensure_active()
   self.conn.query(sql, params?)
 }
 
@@ -65,6 +75,7 @@ pub impl QueryExecutor for DbTx with query_one(
   sql : String,
   params? : Array[&ToValue],
 ) -> Row raise TursoError {
+  self.ensure_active()
   self.conn.query_one(sql, params?)
 }
 
@@ -74,6 +85,7 @@ pub impl QueryExecutor for DbTx with execute(
   sql : String,
   params? : Array[&ToValue],
 ) -> ExecResult raise TursoError {
+  self.ensure_active()
   self.conn.execute(sql, params?)
 }
 
@@ -88,6 +100,9 @@ pub impl Tx for DbTx with commit(self) -> Unit raise TursoError {
       self.conn.close()
     }
   }
+  if self.read_only {
+    ignore(self.conn.exec_blocking("pragma query_only=0"))
+  }
   ignore(self.conn.execute("commit"))
 }
 
@@ -101,6 +116,9 @@ pub impl Tx for DbTx with rollback(self) -> Unit raise TursoError {
     if self.release_pool_conn {
       self.conn.close()
     }
+  }
+  if self.read_only {
+    ignore(self.conn.exec_blocking("pragma query_only=0"))
   }
   ignore(self.conn.execute("rollback"))
 }
@@ -126,17 +144,38 @@ async fn Connection::begin_tx_internal(
   release_pool_conn~ : Bool,
 ) -> DbTx raise TursoError {
   let mode = match opts {
-    None => None
-    Some(o) => o.mode
+    Some({ mode: Some(mode), .. }) => mode
+    _ => self.db.default_tx_mode()
+  }
+  let read_only = match opts {
+    Some({ read_only: Some(value), .. }) => value
+    _ => false
   }
   let sql = match mode {
-    Some(TxMode::Concurrent) => "begin concurrent"
-    Some(TxMode::Immediate) => "begin immediate"
-    Some(TxMode::Exclusive) => "begin exclusive"
+    TxMode::Concurrent => "begin concurrent"
+    TxMode::Immediate => "begin immediate"
+    TxMode::Exclusive => "begin exclusive"
     _ => "begin"
   }
+  if read_only {
+    ignore(self.exec_blocking("pragma query_only=1"))
+  }
+  errdefer {
+    if read_only {
+      try ignore(self.exec_blocking("pragma query_only=0")) catch {
+        _ => ()
+      } noraise {
+        _ => ()
+      }
+    }
+  }
   ignore(self.execute(sql))
-  DbTx::{ conn: self, done: Ref(false), release_pool_conn, }
+  DbTx::{
+    conn: self,
+    done: Ref(false),
+    read_only,
+    release_pool_conn,
+  }
 }
 
 ///|

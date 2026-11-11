@@ -33,6 +33,7 @@ pub fn Connection::close(Self) -> Unit
 pub async fn Connection::execute(Self, String, params? : Array[&ToValue]) -> ExecResult raise TursoError
 pub fn Connection::is_closed(Self) -> Bool
 pub fn Connection::last_insert_rowid(Self) -> Int64
+pub async fn Connection::open(String) -> Self raise TursoError
 pub async fn Connection::query(Self, String, params? : Array[&ToValue]) -> &Rows raise TursoError
 pub async fn Connection::query_one(Self, String, params? : Array[&ToValue]) -> Row raise TursoError
 pub async fn Connection::sqlite_version(Self) -> String raise TursoError

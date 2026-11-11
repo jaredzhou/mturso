@@ -23,6 +23,16 @@ fn is_retryable(e : TursoError) -> Bool {
 }
 
 ///|
+fn retry_backoff_cap(opts : RetryOptions, attempt : Int) -> Int {
+  if opts.base_delay_ms <= 0 {
+    0
+  } else {
+    let shifted = opts.base_delay_ms << (attempt - 1)
+    if shifted > opts.max_delay_ms { opts.max_delay_ms } else { shifted }
+  }
+}
+
+///|
 /// `begin_func` + 重试。重试单位是**整个事务**；重试的是「可重试」那一档
 /// （`Busy` | `Conflict`）。撞到哪个取决于连接的运行模式：
 /// 写者互斥 → `Busy`；MVCC + `BEGIN CONCURRENT` → `Conflict`。
@@ -47,12 +57,7 @@ pub async fn[T, B : TxBeginner] retry_tx(
           raise e
         }
         // full jitter: [0, min(base << (n-1), max)]
-        let cap = if o.base_delay_ms <= 0 {
-          0
-        } else {
-          let shifted = o.base_delay_ms << (attempt - 1)
-          if shifted > o.max_delay_ms { o.max_delay_ms } else { shifted }
-        }
+        let cap = retry_backoff_cap(o, attempt)
         let delay = if cap <= 0 { 0 } else { rng.int(limit=cap) }
         if o.budget_ms is Some(b) &&
           @async.now() - start + delay.to_int64() > b.to_int64() {

@@ -72,7 +72,7 @@ Background: Turso is a **Rust rewrite of SQLite**; upstream is `github.com/turso
 ```bash
 # --- the MoonBit binding (jaredzhou/mturso) ---
 moon check --target native                  # type check
-moon test  --target native                  # → Total tests: 28, passed: 28
+moon test  --target native                  # → Total tests: 36, passed: 36
 moon fmt && moon info                       # format + regenerate pkg.generated.mbti
 
 # version
