@@ -349,6 +349,26 @@ async test "事务：commit / rollback / begin_func / 重复 commit" {
 }
 
 ///|
+async test "UTF-16 String ↔ UTF-8 TEXT：中文/emoji 往返" {
+  let db = @mturso.Database::open(":memory:")
+  defer db.close()
+  let conn = db.connect()
+  defer conn.close()
+  ignore(conn.exec_blocking("create table t(s text)"))
+  ignore(conn.execute("insert into t values (?1)", params=["中文🙂"]))
+
+  let rows = conn.query("select s from t")
+  defer rows.close()
+  assert_true(rows.has_next())
+  let row = rows.get_row()
+  let s : String = row.get(0)
+  // String 是 UTF-16,按字符比较
+  assert_true(s == "中文🙂")
+  // 线上是 UTF-8:中文 3+3 字节,emoji 4 字节 = 10
+  assert_true(row.value_raw(0).length() == 10)
+}
+
+///|
 async test "value_raw：非法 UTF-8 文本宽松解码 + 原始字节" {
   let db = @mturso.Database::open(":memory:")
   defer db.close()
