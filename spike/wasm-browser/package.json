@@ -1,0 +1,16 @@
+{
+  "name": "mturso-wasm-spike",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "cd moonbit && moon build --target wasm --release --deny-warn",
+    "run": "npm run build && node node-host/bridge.mjs",
+    "test": "npm run run"
+  },
+  "dependencies": {
+    "@tursodatabase/database-wasm": "0.8.2"
+  }
+}
