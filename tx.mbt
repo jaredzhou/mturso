@@ -28,8 +28,9 @@ pub fn TxOptions::default() -> TxOptions {
 }
 
 ///|
-/// 进行中的事务：继承 `QueryExecutor`，另有 commit / rollback。
-pub(open) trait Tx: QueryExecutor {
+/// 进行中的事务：只管 commit / rollback，**不**继承 `QueryExecutor`。
+/// 具体类型（`DbTx`）同时实现 `QueryExecutor` 和 `Tx`，两个能力正交。
+pub(open) trait Tx {
   async fn commit(Self) -> Unit raise TursoError
   async fn rollback(Self) -> Unit raise TursoError
 }

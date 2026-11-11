@@ -219,7 +219,7 @@ pub impl ToValue for Json
 pub impl[V : ToJson] ToValue for Map[String, V]
 pub impl[T : ToValue] ToValue for @ref.Ref[T]
 
-pub(open) trait Tx : QueryExecutor {
+pub(open) trait Tx {
   async fn commit(Self) -> Unit raise TursoError
   async fn rollback(Self) -> Unit raise TursoError
 }
