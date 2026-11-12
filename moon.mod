@@ -13,3 +13,7 @@ keywords = [ "sqlite", "turso", "database", "ffi" ]
 description = "MoonBit bindings for Turso Database, layered on the official C ABI (turso.h)."
 
 preferred_target = "native"
+
+import {
+  "jaredzhou/pony@0.6.1",
+}

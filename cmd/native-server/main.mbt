@@ -375,16 +375,10 @@ async fn process_request(
 }
 
 ///|
-async fn handle_pipeline(
-  db : @mturso.Database,
-  conn : @http.ServerConnection,
-) -> Unit {
-  let body = try conn.read_all() catch {
+async fn handle_pipeline(db : @mturso.Database, ctx : @pony.Context) -> Unit {
+  let body = try ctx.req_body.read_all() catch {
     error => {
-      conn.send_response(400, "Bad Request", extra_headers={
-        "content-type": "application/json",
-      })
-      conn.text.write(error_response(400, "\{error}").stringify())
+      ctx.write_json(400, error_response(400, "\{error}"))
       return
     }
   } noraise {
@@ -392,10 +386,7 @@ async fn handle_pipeline(
   }
   let request = try @json.parse(@utf8.decode_lossy(body)) catch {
     error => {
-      conn.send_response(400, "Bad Request", extra_headers={
-        "content-type": "application/json",
-      })
-      conn.text.write(error_response(400, "\{error}").stringify())
+      ctx.write_json(400, error_response(400, "\{error}"))
       return
     }
   } noraise {
@@ -404,42 +395,27 @@ async fn handle_pipeline(
   let fields = match request {
     @json.Json::Object(fields) => fields
     _ => {
-      conn.send_response(400, "Bad Request", extra_headers={
-        "content-type": "application/json",
-      })
-      conn.text.write(
-        error_response(400, "request must be an object").stringify(),
-      )
+      ctx.write_json(400, error_response(400, "request must be an object"))
       return
     }
   }
   if field(fields, "baton") is Some(@json.Json::String(_)) {
-    conn.send_response(400, "Bad Request", extra_headers={
-      "content-type": "application/json",
-    })
-    conn.text.write(
-      error_response(400, "streams and batons are not supported").stringify(),
+    ctx.write_json(
+      400,
+      error_response(400, "streams and batons are not supported"),
     )
     return
   }
   let requests = match field(fields, "requests") {
     Some(@json.Json::Array(requests)) => requests
     _ => {
-      conn.send_response(400, "Bad Request", extra_headers={
-        "content-type": "application/json",
-      })
-      conn.text.write(
-        error_response(400, "requests must be an array").stringify(),
-      )
+      ctx.write_json(400, error_response(400, "requests must be an array"))
       return
     }
   }
   let session = try db.connect() catch {
     error => {
-      conn.send_response(500, "Internal Server Error", extra_headers={
-        "content-type": "application/json",
-      })
-      conn.text.write(error_response(500, @debug.to_string(error)).stringify())
+      ctx.write_json(500, error_response(500, @debug.to_string(error)))
       return
     }
   } noraise {
@@ -455,23 +431,14 @@ async fn handle_pipeline(
     ("base_url", @json.Json::null()),
     ("results", @json.Json::array(results)),
   ])
-  conn.send_response(200, "OK", extra_headers={
-    "content-type": "application/json",
-  })
-  conn.text.write(response.stringify())
+  ctx.write_json(200, response)
 }
 
 ///|
-async fn handle_cursor(
-  db : @mturso.Database,
-  conn : @http.ServerConnection,
-) -> Unit {
-  let body = try conn.read_all() catch {
+async fn handle_cursor(db : @mturso.Database, ctx : @pony.Context) -> Unit {
+  let body = try ctx.req_body.read_all() catch {
     error => {
-      conn.send_response(400, "Bad Request", extra_headers={
-        "content-type": "application/json",
-      })
-      conn.text.write(error_response(400, "\{error}").stringify())
+      ctx.write_json(400, error_response(400, "\{error}"))
       return
     }
   } noraise {
@@ -479,10 +446,7 @@ async fn handle_cursor(
   }
   let request = try @json.parse(@utf8.decode_lossy(body)) catch {
     error => {
-      conn.send_response(400, "Bad Request", extra_headers={
-        "content-type": "application/json",
-      })
-      conn.text.write(error_response(400, "\{error}").stringify())
+      ctx.write_json(400, error_response(400, "\{error}"))
       return
     }
   } noraise {
@@ -491,21 +455,14 @@ async fn handle_cursor(
   let fields = match request {
     @json.Json::Object(fields) => fields
     _ => {
-      conn.send_response(400, "Bad Request", extra_headers={
-        "content-type": "application/json",
-      })
-      conn.text.write(
-        error_response(400, "request must be an object").stringify(),
-      )
+      ctx.write_json(400, error_response(400, "request must be an object"))
       return
     }
   }
   if field(fields, "baton") is Some(@json.Json::String(_)) {
-    conn.send_response(400, "Bad Request", extra_headers={
-      "content-type": "application/json",
-    })
-    conn.text.write(
-      error_response(400, "streams and batons are not supported").stringify(),
+    ctx.write_json(
+      400,
+      error_response(400, "streams and batons are not supported"),
     )
     return
   }
@@ -513,41 +470,27 @@ async fn handle_cursor(
     Some(value) =>
       try as_object(value) catch {
         _ => {
-          conn.send_response(400, "Bad Request", extra_headers={
-            "content-type": "application/json",
-          })
-          conn.text.write(error_response(400, "invalid batch").stringify())
+          ctx.write_json(400, error_response(400, "invalid batch"))
           return
         }
       } noraise {
         value => value
       }
     None => {
-      conn.send_response(400, "Bad Request", extra_headers={
-        "content-type": "application/json",
-      })
-      conn.text.write(error_response(400, "batch is required").stringify())
+      ctx.write_json(400, error_response(400, "batch is required"))
       return
     }
   }
   let steps = match field(batch, "steps") {
     Some(@json.Json::Array(steps)) => steps
     _ => {
-      conn.send_response(400, "Bad Request", extra_headers={
-        "content-type": "application/json",
-      })
-      conn.text.write(
-        error_response(400, "batch.steps is required").stringify(),
-      )
+      ctx.write_json(400, error_response(400, "batch.steps is required"))
       return
     }
   }
   let session = try db.connect() catch {
     error => {
-      conn.send_response(500, "Internal Server Error", extra_headers={
-        "content-type": "application/json",
-      })
-      conn.text.write(error_response(500, @debug.to_string(error)).stringify())
+      ctx.write_json(500, error_response(500, @debug.to_string(error)))
       return
     }
   } noraise {
@@ -639,10 +582,8 @@ async fn handle_cursor(
   lines.write_string(
     "{\"type\":\"replication_index\",\"replication_index\":null}\n",
   )
-  conn.send_response(200, "OK", extra_headers={
-    "content-type": "application/x-ndjson",
-  })
-  conn.text.write(lines.to_string())
+  ctx.set_content_type("application/x-ndjson")
+  ctx.write_text(200, lines.to_string())
 }
 
 ///|
@@ -667,29 +608,56 @@ async fn main {
     value => value
   }
   defer db.close()
-  let server = try @http.Server(@socket.Addr::parse(address)) catch {
+  let router = @pony.Router::Router()
+  try
+    router.add(@pony.HttpMethod::Post, "/v2/pipeline", ctx => {
+      handle_pipeline(db, ctx)
+    })
+  catch {
     error => {
-      println("failed to bind \{address}: \{error}")
+      println("failed to register /v2/pipeline: \{error}")
       @env.exit(1)
     }
   } noraise {
-    value => value
+    _ => ()
   }
-  defer server.close()
-  println("native sync server listening at http://\{server.addr}")
-  server.run_forever(async fn(request, conn) {
-    match (request.meth, request.path) {
-      (@http.Post, "/v2/pipeline") | (@http.Post, "/v3/pipeline") =>
-        handle_pipeline(db, conn)
-      (@http.Post, "/v3/cursor") => handle_cursor(db, conn)
-      (@http.Options, _) =>
-        conn.send_response(204, "No Content", extra_headers={})
-      _ => {
-        conn.send_response(404, "Not Found", extra_headers={
-          "content-type": "application/json",
-        })
-        conn.text.write(error_response(404, "Not Found").stringify())
-      }
+  try
+    router.add(@pony.HttpMethod::Post, "/v3/pipeline", ctx => {
+      handle_pipeline(db, ctx)
+    })
+  catch {
+    error => {
+      println("failed to register /v3/pipeline: \{error}")
+      @env.exit(1)
     }
+  } noraise {
+    _ => ()
+  }
+  try
+    router.add(@pony.HttpMethod::Post, "/v3/cursor", ctx => {
+      handle_cursor(db, ctx)
+    })
+  catch {
+    error => {
+      println("failed to register /v3/cursor: \{error}")
+      @env.exit(1)
+    }
+  } noraise {
+    _ => ()
+  }
+  try
+    router.add(@pony.HttpMethod::Options, "/*", ctx => ctx.no_content())
+  catch {
+    error => {
+      println("failed to register OPTIONS route: \{error}")
+      @env.exit(1)
+    }
+  } noraise {
+    _ => ()
+  }
+  router.set_not_found(ctx => {
+    ctx.write_json(404, error_response(404, "Not Found"))
   })
+  println("native sync server listening at http://\{address}")
+  @pony.start(address, router)
 }

@@ -376,7 +376,7 @@ Override `SYNC_DB`, `SYNC_ADDR`, or `TURSODB` when needed. `make server-wrapper`
 starts the `cmd/server` MoonBit executable instead of invoking `tursodb` directly.
 
 `SyncServerConfig` selects the external pinned CLI by default. The native
-backend uses the in-process MoonBit HTTP server and Turso engine:
+backend uses the in-process `jaredzhou/pony@0.6.1` HTTP server and Turso engine:
 
 ```moonbit
 let server = @server.SyncServer::start(
