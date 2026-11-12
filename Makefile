@@ -22,7 +22,7 @@ download-cli:
 	bash scripts/fetch-tursodb-cli.sh
 
 test-server: download-cli
-	TURSODB="$(TURSODB)" $(MOON) test --target native --deny-warn cmd/server/lib
+	TURSODB="$(TURSODB)" $(MOON) test --target native --deny-warn server
 
 server: download-cli
 	mkdir -p "$(dir $(SYNC_DB))"

@@ -1,3 +1,4 @@
+// Native sync-server lifecycle library.
 supported_targets = "+native"
 
 import {

@@ -4,7 +4,7 @@ pkgtype(kind: "executable")
 
 import {
   "jaredzhou/mturso",
-  "jaredzhou/mturso/cmd/server/lib",
+  "jaredzhou/mturso/server"@srv,
   "moonbitlang/core/async",
   "moonbitlang/core/debug",
   "moonbitlang/core/env",

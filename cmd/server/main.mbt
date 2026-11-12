@@ -7,8 +7,8 @@ async fn main {
   }
   let database_path = args[1]
   let address = if args.length() >= 3 { args[2] } else { "127.0.0.1:8080" }
-  let config = @lib.SyncServerConfig::new(database_path, address~)
-  let server = @lib.SyncServer::start(config) catch {
+  let config = @srv.SyncServerConfig::new(database_path, address~)
+  let server = @srv.SyncServer::start(config) catch {
     @mturso.TursoError::SyncError(kind, message) => {
       println(
         "failed to start sync server (\{@debug.to_string(kind)}): \{message}",

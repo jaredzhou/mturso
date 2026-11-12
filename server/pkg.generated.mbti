@@ -1,5 +1,5 @@
 // Generated using `moon info`, DON'T EDIT IT
-package "jaredzhou/mturso/cmd/server/lib"
+package "jaredzhou/mturso/server"
 
 import {
   "jaredzhou/mturso",
