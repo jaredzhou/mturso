@@ -90,7 +90,7 @@ jobs:
       - name: Build native pipeline server
         run: |
           moon build cmd/native-server --target native
-          echo "MTURSO_NATIVE_SERVER=$PWD/_build/native/debug/build/cmd/native-server/native-server" >> "$GITHUB_ENV"
+          echo "MTURSO_NATIVE_SERVER=$PWD/_build/native/debug/build/cmd/native-server/native-server.exe" >> "$GITHUB_ENV"
 
       # Build and run all tests.
       - name: Test

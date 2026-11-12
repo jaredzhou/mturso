@@ -13,7 +13,7 @@ endif
 TURSODB ?= $(TURSODB_CACHE)/$(TURSODB_EXE)
 SYNC_DB ?= .cache/turso-sync-server.db
 SYNC_ADDR ?= 127.0.0.1:8080
-NATIVE_SERVER ?= $(CURDIR)/_build/native/debug/build/cmd/native-server/native-server$(if $(filter Windows_NT,$(OS)),.exe,)
+NATIVE_SERVER ?= $(CURDIR)/_build/native/debug/build/cmd/native-server/native-server.exe
 
 .PHONY: check test download-cli native-server native-server-run test-server server server-wrapper fmt
 

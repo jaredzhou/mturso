@@ -141,13 +141,25 @@ async test "native pipeline executes SQL and parameters" {
   }
   let dir = @fs.tmpdir(prefix="mturso-native-pipeline")
   defer @fs.rmdir(dir, recursive=true)
-  let server = @server.SyncServer::start(
-    @server.SyncServerConfig::new(
-      dir + "/pipeline.db",
-      backend=@server.SyncServerBackend::Native,
-      native_executable=Some(executable),
-    ),
-  )
+  let server = try
+    @server.SyncServer::start(
+      @server.SyncServerConfig::new(
+        dir + "/pipeline.db",
+        backend=@server.SyncServerBackend::Native,
+        native_executable=Some(executable),
+      ),
+    )
+  catch {
+    @mturso.TursoError::SyncError(kind, message) => {
+      println(
+        "native server start failed (\{@debug.to_string(kind)}): \{message}",
+      )
+      raise @mturso.sync_error(kind, message)
+    }
+    _ => fail("unexpected native server startup error type")
+  } noraise {
+    value => value
+  }
   defer @async.protect_from_cancel(async fn() { server.stop() })
   let body =
     #|{"baton":null,"requests":[
