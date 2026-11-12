@@ -10,9 +10,17 @@ pub async fn process_cursor_request(@mturso.Database, Bytes) -> NativeHttpRespon
 
 pub async fn process_pipeline_request(@mturso.Database, Bytes) -> NativeHttpResponse
 
+pub async fn process_pull_updates_request(@mturso.Database, String, Bytes) -> NativeBinaryHttpResponse
+
 // Errors
 
 // Types and methods
+pub(all) struct NativeBinaryHttpResponse {
+  status : Int
+  content_type : String
+  body : Bytes
+}
+
 pub(all) struct NativeHttpResponse {
   status : Int
   content_type : String

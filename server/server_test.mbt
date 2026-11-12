@@ -220,3 +220,146 @@ async test "native pipeline executes SQL and parameters" {
   assert_true(bad_status == 400)
   assert_true(bad_body.contains("error"))
 }
+
+///|
+async test "native sync server bootstraps a file-backed database" {
+  let executable = match @env.get_env_var("MTURSO_NATIVE_SERVER") {
+    Some(path) if path != "" => path
+    _ => return
+  }
+  let dir = @fs.tmpdir(prefix="mturso-native-bootstrap")
+  defer @fs.rmdir(dir, recursive=true)
+  let remote_path = dir + "/remote.db"
+  let remote = @mturso.Database::open(remote_path)
+  let seed = remote.connect()
+  ignore(seed.execute("create table notes(id integer primary key, body text)"))
+  ignore(seed.execute("insert into notes(body) values ('alpha'), ('beta')"))
+  seed.close()
+  remote.close()
+
+  let server = try
+    @server.SyncServer::start(
+      @server.SyncServerConfig::new(
+        remote_path,
+        backend=@server.SyncServerBackend::Native,
+        native_executable=Some(executable),
+      ),
+    )
+  catch {
+    @mturso.TursoError::SyncError(kind, message) => {
+      println(
+        "native server start failed (\{@debug.to_string(kind)}): \{message}",
+      )
+      raise @mturso.sync_error(kind, message)
+    }
+    _ => fail("unexpected native server startup error type")
+  } noraise {
+    value => value
+  }
+  defer @async.protect_from_cancel(async fn() { server.stop() })
+
+  let replica = try
+    @mturso.SyncDatabase::open(
+      @mturso.SyncConfig::new(
+        dir + "/local.db",
+        remote_url=server.base_url(),
+        long_poll_timeout_ms=100,
+      ),
+    )
+  catch {
+    @mturso.TursoError::SyncError(kind, message) => {
+      println(
+        "native sync bootstrap failed (\{@debug.to_string(kind)}): \{message}",
+      )
+      raise @mturso.sync_error(kind, message)
+    }
+    _ => fail("unexpected sync bootstrap error type")
+  } noraise {
+    value => value
+  }
+  defer replica.close()
+  let conn = replica.connect()
+  defer conn.close()
+  let bodies : Array[String] = conn.fetch("select body from notes order by id")
+  assert_true(bodies.length() == 2)
+  assert_true(bodies[0] == "alpha")
+  assert_true(bodies[1] == "beta")
+}
+
+///|
+async test "native pull updates rejects a truncated protobuf request" {
+  let dir = @fs.tmpdir(prefix="mturso-native-pull-truncated")
+  defer @fs.rmdir(dir, recursive=true)
+  let path = dir + "/remote.db"
+  let db = @mturso.Database::open(path)
+  defer db.close()
+  let response = @server.process_pull_updates_request(db, path, b"\x12\x05x")
+  assert_true(response.status == 400)
+  assert_true(
+    @utf8.decode_lossy(response.body).contains("invalid pull-updates request"),
+  )
+}
+
+///|
+async test "native sync server keeps bootstrap state across restart" {
+  let executable = match @env.get_env_var("MTURSO_NATIVE_SERVER") {
+    Some(path) if path != "" => path
+    _ => return
+  }
+  let dir = @fs.tmpdir(prefix="mturso-native-restart")
+  defer @fs.rmdir(dir, recursive=true)
+  let remote_path = dir + "/remote.db"
+  let remote = @mturso.Database::open(remote_path)
+  let seed = remote.connect()
+  ignore(seed.execute("create table notes(id integer primary key, body text)"))
+  ignore(seed.execute("insert into notes(body) values ('persisted')"))
+  seed.close()
+  remote.close()
+
+  let first = @server.SyncServer::start(
+    @server.SyncServerConfig::new(
+      remote_path,
+      backend=@server.SyncServerBackend::Native,
+      native_executable=Some(executable),
+    ),
+  )
+  let address = first.base_url()[7:].to_owned()
+  let first_replica = @mturso.SyncDatabase::open(
+    @mturso.SyncConfig::new(
+      dir + "/first.db",
+      remote_url=first.base_url(),
+      long_poll_timeout_ms=100,
+    ),
+  )
+  let first_conn = first_replica.connect()
+  let first_rows : Array[String] = first_conn.fetch("select body from notes")
+  assert_true(first_rows.length() == 1)
+  assert_true(first_rows[0] == "persisted")
+  first_conn.close()
+  first_replica.close()
+  first.stop()
+
+  let second = @server.SyncServer::start(
+    @server.SyncServerConfig::new(
+      remote_path,
+      backend=@server.SyncServerBackend::Native,
+      native_executable=Some(executable),
+      address~,
+    ),
+  )
+  defer @async.protect_from_cancel(async fn() { second.stop() })
+  let second_replica = @mturso.SyncDatabase::open(
+    @mturso.SyncConfig::new(
+      dir + "/second.db",
+      remote_url=second.base_url(),
+      long_poll_timeout_ms=100,
+    ),
+  )
+  defer second_replica.close()
+  let second_conn = second_replica.connect()
+  defer second_conn.close()
+  let second_rows : Array[String] = second_conn.fetch("select body from notes")
+  assert_true(second_rows.length() == 1)
+  assert_true(second_rows[0] == "persisted")
+  assert_true(second_replica.stats().revision.length() > 0)
+}

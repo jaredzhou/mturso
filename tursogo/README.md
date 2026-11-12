@@ -30,6 +30,18 @@ tursogo-serverless: ok
 The test covers DDL, parameter binding, TEXT, BLOB, `ExecContext`, the v3 cursor
 endpoint, and `QueryRowContext(...).Scan`.
 
-When the self-hosted server implements `/pull-updates`, extend this directory
-with an embedded `tursogo` syncdb smoke test covering bootstrap, push, pull,
-checkpoint, and stats.
+## Sync bootstrap smoke test
+
+`sync_test.go` uses the embedded official `turso.tech/database/tursogo` client
+against the native server's `/pull-updates` endpoint. It verifies page
+bootstrap, local queries, an unchanged empty pull, and sync stats.
+
+Run it with the repository helper, which starts and stops the native server:
+
+```powershell
+make test-tursogo-sync
+```
+
+The test skips when `MTURSO_SYNC_URL` is unset, so the normal `go test ./...`
+does not require a running server. Push, checkpoint, and multi-replica sync
+will be added with their server tickets.

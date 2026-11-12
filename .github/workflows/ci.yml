@@ -99,6 +99,9 @@ jobs:
       - name: Check tursogo-serverless test module
         run: cd tursogo && go test ./...
 
+      - name: Test official Go sync client against native server
+        run: bash scripts/test-tursogo-sync.sh
+
       # Build and run all tests.
       - name: Test
         run: moon test --target native --deny-warn
@@ -161,6 +164,10 @@ jobs:
         run: |
           Push-Location tursogo
           try { go test ./... } finally { Pop-Location }
+
+      - name: Test official Go sync client against native server
+        shell: bash
+        run: bash scripts/test-tursogo-sync.sh
 
       - name: Test
         shell: pwsh

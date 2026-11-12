@@ -8,12 +8,14 @@ import {
   "moonbitlang/core/async/http",
   "moonbitlang/core/async/process",
   "moonbitlang/core/async/socket",
+  "moonbitlang/core/buffer",
   "moonbitlang/core/debug",
   "moonbitlang/core/encoding/base64",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/env",
   "moonbitlang/core/json",
   "moonbitlang/core/string",
+  "moonbitlang/protobuf",
 }
 
 options(

@@ -16,4 +16,5 @@ preferred_target = "native"
 
 import {
   "jaredzhou/pony@0.7.0",
+  "moonbitlang/protobuf@0.2.0",
 }
