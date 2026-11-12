@@ -147,7 +147,7 @@ async fn Connection::begin_tx_internal(
 ) -> DbTx raise TursoError {
   let mode = match opts {
     Some({ mode: Some(mode), .. }) => mode
-    _ => self.db.default_tx_mode()
+    _ => (self.lifetime.default_tx_mode)()
   }
   let read_only = match opts {
     Some({ read_only: Some(value), .. }) => value

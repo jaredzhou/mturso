@@ -38,11 +38,15 @@ pub struct Database {
 
 ///|
 /// 连接句柄（池里的一次 checkout）。
+priv struct ConnectionLifetime {
+  release : () -> Unit
+  is_closed : () -> Bool
+  default_tx_mode : () -> TxMode
+}
+
 pub struct Connection {
-  priv db : Database
   priv raw : @ffi.Conn
-  priv busy_index : Int
-  priv mut owns_db : Bool
+  priv mut lifetime : ConnectionLifetime
   priv closed : Ref[Bool]
 }
 
@@ -100,8 +104,31 @@ pub async fn Connection::open(path : String) -> Connection raise TursoError {
   let db = Database::open(path, max_conns=1)
   errdefer db.close()
   let conn = db.connect()
-  conn.owns_db = true
+  conn.lifetime = {
+    release: () => db.close(),
+    is_closed: () => db.closed.val,
+    default_tx_mode: () => db.default_tx_mode.val,
+  }
   conn
+}
+
+///|
+fn Database::release_connection(
+  self : Database,
+  raw : @ffi.Conn,
+  busy_index : Int,
+) -> Unit {
+  if self.closed.val {
+    return
+  }
+  self.busy[busy_index] = None
+  if self.idle_len.val < self.idle.length() {
+    self.idle[self.idle_len.val] = raw
+  } else {
+    self.idle.push(raw)
+  }
+  self.idle_len.val = self.idle_len.val + 1
+  self.sem.release()
 }
 
 ///|
@@ -138,7 +165,15 @@ pub async fn Database::connect(self : Database) -> Connection raise TursoError {
   }
   let idx = self.busy.length()
   self.busy.push(Some(raw))
-  { db: self, raw, busy_index: idx, owns_db: false, closed: Ref(false), }
+  {
+    raw,
+    lifetime: {
+      release: () => self.release_connection(raw, idx),
+      is_closed: () => self.closed.val,
+      default_tx_mode: () => self.default_tx_mode.val,
+    },
+    closed: Ref(false),
+  }
 }
 
 ///|
@@ -148,24 +183,7 @@ pub fn Connection::close(self : Connection) -> Unit {
     return
   }
   self.closed.val = true
-  if self.owns_db {
-    self.db.close()
-    return
-  }
-  if self.db.closed.val {
-    return
-  }
-  // 墓碑：槽位留着，索引稳定
-  let busy = self.db.busy
-  busy[self.busy_index] = None
-  // 推回 idle
-  if self.db.idle_len.val < self.db.idle.length() {
-    self.db.idle[self.db.idle_len.val] = self.raw
-  } else {
-    self.db.idle.push(self.raw)
-  }
-  self.db.idle_len.val = self.db.idle_len.val + 1
-  self.db.sem.release()
+  (self.lifetime.release)()
 }
 
 ///|
@@ -177,7 +195,7 @@ pub fn Connection::is_closed(self : Connection) -> Bool {
 ///|
 /// 使用前检查：连接已还回 / 库已关 → `ConnectionError`。
 fn Connection::ensure_open(self : Connection) -> Unit raise TursoError {
-  if self.closed.val || self.db.closed.val {
+  if self.closed.val || (self.lifetime.is_closed)() {
     raise TursoError::ConnectionError("connection is closed")
   }
 }
