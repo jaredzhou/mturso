@@ -58,6 +58,8 @@ pub fn sync_db_create(SyncDb) -> SyncOp
 
 pub fn sync_db_new(Bytes, Bytes, Bytes, Int, Bool) -> SyncDb
 
+pub fn sync_db_push(SyncDb) -> SyncOp
+
 pub fn sync_db_step_callbacks(SyncDb) -> Int
 
 pub fn sync_db_take_io(SyncDb) -> SyncIo

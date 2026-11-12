@@ -133,3 +133,134 @@ async test "sync database reports network failure during bootstrap" {
   }
   assert_true(rejected)
 }
+
+///|
+async test "sync database pushes committed local changes" {
+  match @env.get_env_var("TURSODB") {
+    Some(path) if path != "" => ()
+    _ => return
+  }
+  let dir = @fs.tmpdir(prefix="mturso-sync-push")
+  defer @fs.rmdir(dir, recursive=true)
+  let server = @server.SyncServer::start(
+    @server.SyncServerConfig::new(dir + "/remote.db"),
+  )
+  defer @async.protect_from_cancel(async fn() { server.stop() })
+
+  let source = @mturso.SyncDatabase::open(
+    @mturso.SyncConfig::new(dir + "/source.db", remote_url=server.base_url()),
+  )
+  let source_conn = source.connect()
+  ignore(
+    source_conn.execute("create table notes(id integer primary key, body text)"),
+  )
+  ignore(
+    source_conn.execute(
+      "insert into notes(body) values ('first'), ('second'), ('delete-me')",
+    ),
+  )
+  ignore(
+    source_conn.execute(
+      "update notes set body = 'updated' where body = 'first'",
+    ),
+  )
+  ignore(source_conn.execute("delete from notes where body = 'delete-me'"))
+  source.push()
+  let push_failures : Ref[Int] = Ref(0)
+  @async.with_task_group(group => {
+    group.spawn_bg(() => {
+      try source.push() catch {
+        _ => push_failures.val = push_failures.val + 1
+      } noraise {
+        _ => ()
+      }
+    })
+    group.spawn_bg(() => {
+      try source.push() catch {
+        _ => push_failures.val = push_failures.val + 1
+      } noraise {
+        _ => ()
+      }
+    })
+  })
+  assert_true(push_failures.val == 0)
+  source_conn.close()
+  source.close()
+
+  let replica = @mturso.SyncDatabase::open(
+    @mturso.SyncConfig::new(dir + "/replica.db", remote_url=server.base_url()),
+  )
+  defer replica.close()
+  let replica_conn = replica.connect()
+  defer replica_conn.close()
+  let bodies : Array[String] = replica_conn.fetch(
+    "select body from notes order by id",
+  )
+  assert_true(bodies.length() == 2)
+  assert_true(bodies[0] == "updated")
+  assert_true(bodies[1] == "second")
+}
+
+///|
+async test "sync push failure keeps local changes for retry" {
+  match @env.get_env_var("TURSODB") {
+    Some(path) if path != "" => ()
+    _ => return
+  }
+  let dir = @fs.tmpdir(prefix="mturso-sync-push-retry")
+  defer @fs.rmdir(dir, recursive=true)
+  let remote_path = dir + "/remote.db"
+  let server = @server.SyncServer::start(
+    @server.SyncServerConfig::new(remote_path),
+  )
+  defer @async.protect_from_cancel(async fn() { server.stop() })
+  let address = server.base_url()[7:].to_owned()
+
+  let source = @mturso.SyncDatabase::open(
+    @mturso.SyncConfig::new(dir + "/source.db", remote_url=server.base_url()),
+  )
+  defer source.close()
+  let source_conn = source.connect()
+  defer source_conn.close()
+  ignore(
+    source_conn.execute("create table notes(id integer primary key, body text)"),
+  )
+  ignore(source_conn.execute("insert into notes(body) values ('before')"))
+  source.push()
+
+  server.stop()
+  ignore(source_conn.execute("insert into notes(body) values ('offline')"))
+  let mut network_error = false
+  try source.push() catch {
+    @mturso.TursoError::SyncError(@mturso.SyncErrorKind::Network, message) => {
+      assert_true(message.length() > 0)
+      network_error = true
+    }
+    _ => ()
+  } noraise {
+    _ => ()
+  }
+  assert_true(network_error)
+
+  let restarted = @server.SyncServer::start(
+    @server.SyncServerConfig::new(remote_path, address~),
+  )
+  defer @async.protect_from_cancel(async fn() { restarted.stop() })
+  source.push()
+
+  let replica = @mturso.SyncDatabase::open(
+    @mturso.SyncConfig::new(
+      dir + "/replica.db",
+      remote_url=restarted.base_url(),
+    ),
+  )
+  defer replica.close()
+  let replica_conn = replica.connect()
+  defer replica_conn.close()
+  let bodies : Array[String] = replica_conn.fetch(
+    "select body from notes order by id",
+  )
+  assert_true(bodies.length() == 2)
+  assert_true(bodies[0] == "before")
+  assert_true(bodies[1] == "offline")
+}

@@ -170,6 +170,11 @@ mturso_sync_op_t *mturso_sync_db_connect(mturso_sync_db_t *db) {
 }
 
 MOONBIT_FFI_EXPORT
+mturso_sync_op_t *mturso_sync_db_push(mturso_sync_db_t *db) {
+  return sync_db_start_operation(db, turso_sync_database_push_changes);
+}
+
+MOONBIT_FFI_EXPORT
 int32_t mturso_sync_op_resume(mturso_sync_op_t *op) {
   mturso_clear_err();
   const turso_sync_operation_t *raw = sync_op_raw(op);

@@ -153,6 +153,7 @@ pub fn SyncDatabase::close(Self) -> Unit
 pub async fn SyncDatabase::connect(Self) -> Connection raise TursoError
 pub fn SyncDatabase::is_closed(Self) -> Bool
 pub async fn SyncDatabase::open(SyncConfig) -> Self raise TursoError
+pub async fn SyncDatabase::push(Self) -> Unit raise TursoError
 
 #derive(@debug.Debug)
 pub(all) enum SyncErrorKind {

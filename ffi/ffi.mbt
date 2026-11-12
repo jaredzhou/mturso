@@ -60,6 +60,10 @@ pub extern "c" fn sync_db_create(db : SyncDb) -> SyncOp = "mturso_sync_db_create
 pub extern "c" fn sync_db_connect(db : SyncDb) -> SyncOp = "mturso_sync_db_connect"
 
 ///|
+#borrow(db)
+pub extern "c" fn sync_db_push(db : SyncDb) -> SyncOp = "mturso_sync_db_push"
+
+///|
 #borrow(op)
 pub extern "c" fn sync_op_resume(op : SyncOp) -> Int = "mturso_sync_op_resume"
 

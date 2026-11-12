@@ -45,6 +45,7 @@ pub struct SyncDatabase {
   priv idle_len : Ref[Int]
   priv busy : Array[@ffi.Conn?]
   priv sem : @async.Semaphore
+  priv operation_lock : @async.Semaphore
   priv closed : Ref[Bool]
 }
 
@@ -181,14 +182,30 @@ async fn SyncIoContext::handle_http(
   if self.auth_token is Some(token) && token != "" {
     headers[@http.CaseInsensitiveString("Authorization")] = "Bearer \{token}"
   }
+  if body.length() > 0 {
+    headers[@http.CaseInsensitiveString("Content-Length")] = body
+      .length()
+      .to_string()
+  }
   let url = if path != "" {
     join_remote_url(self.base_url, path)
   } else {
     request_url
   }
-  let response = try
-    @http.request_binary(sync_http_method(method_name), url, body, headers~)
-  catch {
+  let response = try {
+    let client = @http.Client::Client()
+    defer client.close()
+    let conn = client.request(
+      sync_http_method(method_name),
+      url,
+      extra_headers=headers,
+    )
+    defer conn.close()
+    conn.write(body)
+    let header = conn.end_request()
+    let response_body = conn.read_all()
+    (header, response_body)
+  } catch {
     error => {
       let message = "\{error}"
       ignore(@ffi.sync_io_poison(item, @utf8.encode(message)))
@@ -419,6 +436,7 @@ pub async fn SyncDatabase::open(
     idle_len: Ref(0),
     busy: [],
     sem: @async.Semaphore::Semaphore(n),
+    operation_lock: @async.Semaphore::Semaphore(1),
     closed: Ref(false),
   }
   errdefer db.close()
@@ -502,6 +520,25 @@ pub async fn SyncDatabase::connect(
       auth_token: self.config.auth_token,
     }),
   }
+}
+
+///|
+/// Push committed local changes to the remote database.
+pub async fn SyncDatabase::push(self : SyncDatabase) -> Unit raise TursoError {
+  if self.closed.val {
+    raise TursoError::ConnectionError("sync database is closed")
+  }
+  self.operation_lock.acquire()
+  defer self.operation_lock.release()
+  let io : SyncIoContext = {
+    raw_db: self.raw,
+    base_url: trim_trailing_slashes(self.config.remote_url),
+    auth_token: self.config.auth_token,
+  }
+  let op = @ffi.sync_db_push(self.raw)
+  defer @ffi.sync_op_close(op)
+  check_sync_error()
+  drive_sync_operation(io, op)
 }
 
 ///|
