@@ -60,6 +60,18 @@ jobs:
           src="$tmp/github.com/tursodatabase/turso-go-platform-libs@v0.8.2/libs/$sub/$lib"
           TURSO_LIB_SRC="$src" bash scripts/fetch-turso-lib.sh
 
+      - name: Fetch pinned tursodb for lifecycle tests
+        if: runner.os == 'Linux' && runner.arch == 'X64'
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/tursodb-v0.8.2"
+          mkdir -p "$dir"
+          curl -fsSL "https://github.com/tursodatabase/turso/releases/download/v0.8.2/turso_cli-x86_64-unknown-linux-gnu.tar.xz" |
+            tar -xJ -C "$dir"
+          bin="$(find "$dir" -type f -name tursodb -perm -u+x | head -n1)"
+          test -n "$bin"
+          echo "TURSODB=$bin" >> "$GITHUB_ENV"
+
       # Type-check with warnings as errors.
       - name: Check
         run: moon check --target native --deny-warn
@@ -101,6 +113,18 @@ jobs:
         run: |
           moon version --all
           moon update
+
+      - name: Fetch pinned tursodb for lifecycle tests
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP "tursodb-v0.8.2"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          $archive = Join-Path $dir "turso_cli.zip"
+          curl.exe -fsSL "https://github.com/tursodatabase/turso/releases/download/v0.8.2/turso_cli-x86_64-pc-windows-msvc.zip" -o $archive
+          Expand-Archive -LiteralPath $archive -DestinationPath $dir -Force
+          $bin = Get-ChildItem -LiteralPath $dir -Recurse -Filter "tursodb.exe" | Select-Object -First 1
+          if (-not $bin) { throw "tursodb.exe not found" }
+          "TURSODB=$($bin.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Check
         shell: pwsh

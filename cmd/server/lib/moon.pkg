@@ -1,0 +1,24 @@
+supported_targets = "+native"
+
+import {
+  "jaredzhou/mturso",
+  "moonbitlang/core/async",
+  "moonbitlang/core/async/http",
+  "moonbitlang/core/async/process",
+  "moonbitlang/core/async/socket",
+  "moonbitlang/core/env",
+}
+
+import {
+  "moonbitlang/core/async/fs",
+} for "test"
+
+options(
+  "allow-experimental-packages": [
+    "moonbitlang/core/async",
+    "moonbitlang/core/async/fs",
+    "moonbitlang/core/async/http",
+    "moonbitlang/core/async/process",
+    "moonbitlang/core/async/socket",
+  ],
+)

@@ -1,0 +1,28 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "jaredzhou/mturso/cmd/server/lib"
+
+import {
+  "jaredzhou/mturso",
+}
+
+// Values
+
+// Errors
+
+// Types and methods
+pub struct SyncServer {
+  // private fields
+}
+pub fn SyncServer::base_url(Self) -> String
+pub async fn SyncServer::start(SyncServerConfig) -> Self raise @mturso.TursoError
+pub async fn SyncServer::stop(Self) -> Unit
+pub async fn SyncServer::wait(Self) -> Int
+
+pub struct SyncServerConfig {
+  // private fields
+}
+pub fn SyncServerConfig::new(String, tursodb_path? : String?, address? : String, startup_timeout_ms? : Int) -> Self
+
+// Type aliases
+
+// Traits

@@ -1,0 +1,15 @@
+supported_targets = "+native"
+
+pkgtype(kind: "executable")
+
+import {
+  "jaredzhou/mturso",
+  "jaredzhou/mturso/cmd/server/lib",
+  "moonbitlang/core/async",
+  "moonbitlang/core/debug",
+  "moonbitlang/core/env",
+}
+
+options(
+  "allow-experimental-packages": [ "moonbitlang/core/async" ],
+)

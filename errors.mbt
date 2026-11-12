@@ -13,12 +13,28 @@
 /// 没开 MVCC（或开了 MVCC 但用普通 `BEGIN`）走写者互斥 → `Busy`；
 /// MVCC + `BEGIN CONCURRENT` 走乐观并发 → 提交时 `Conflict`。
 #derive(Debug)
+pub(all) enum SyncErrorKind {
+  Network
+  Auth
+  Protocol
+  RemoteBusy
+  RemoteConflict
+  Internal
+}
+
+#derive(Debug)
 pub suberror TursoError {
   ConnectionError(String)
   QueryError(String)
   NoRows
   Busy(String)
   Conflict(String)
+  SyncError(SyncErrorKind, String)
+}
+
+///|
+pub fn sync_error(kind : SyncErrorKind, message : String) -> TursoError {
+  TursoError::SyncError(kind, message)
 }
 
 ///|

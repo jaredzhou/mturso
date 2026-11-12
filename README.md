@@ -315,6 +315,17 @@ moon test  --target native      # run the test suite (36 tests)
 
 Do not run a bare `moon fmt` over the sources: this toolchain respells `Int` to `Int32`. If you do, revert with `sed -i 's/Int32/Int/g'` on the touched files.
 
+The sync-server development helpers download the pinned Turso CLI into `.cache/`:
+
+```bash
+make download-cli               # fetch and verify tursodb 0.8.2
+make test-server                # run sync-server lifecycle tests
+make server                     # start foreground server on 127.0.0.1:8080
+```
+
+Override `SYNC_DB`, `SYNC_ADDR`, or `TURSODB` when needed. `make server-wrapper`
+starts the `cmd/server` MoonBit executable instead of invoking `tursodb` directly.
+
 The Linux x86_64 and Windows x64 Turso libraries are vendored in `libs/` with
 SHA-256 files. They are loaded at runtime, so neither the repo nor a consumer
 needs `-L`, `-l`, an rpath, or `LD_LIBRARY_PATH`. On another platform or

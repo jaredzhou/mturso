@@ -15,6 +15,8 @@ pub async fn[T, B : TxBeginner] begin_func(B, async (DbTx) -> T raise TursoError
 
 pub async fn[T, B : TxBeginner] retry_tx(B, async (DbTx) -> T raise TursoError, opts? : RetryOptions) -> T raise TursoError
 
+pub fn sync_error(SyncErrorKind, String) -> TursoError
+
 // Errors
 #derive(@debug.Debug)
 pub suberror TursoError {
@@ -23,6 +25,7 @@ pub suberror TursoError {
   NoRows
   Busy(String)
   Conflict(String)
+  SyncError(SyncErrorKind, String)
 }
 
 pub(all) suberror ValueError {
@@ -136,6 +139,16 @@ pub fn[T : FromValue] Row::get_by_name(Self, String) -> T raise TursoError
 pub fn Row::len(Self) -> Int
 pub fn Row::value(Self, Int) -> @value.Value
 pub fn Row::value_raw(Self, Int) -> Bytes
+
+#derive(@debug.Debug)
+pub(all) enum SyncErrorKind {
+  Network
+  Auth
+  Protocol
+  RemoteBusy
+  RemoteConflict
+  Internal
+}
 
 #derive(Eq, @debug.Debug)
 pub(all) struct Timestamp(String)
