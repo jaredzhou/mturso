@@ -10,12 +10,6 @@ import {
   "moonbitlang/core/random",
 }
 
-import {
-  "jaredzhou/mturso/server",
-  "moonbitlang/core/debug",
-  "moonbitlang/core/env",
-} for "test"
-
 // 绑定依赖 Turso 的 C ABI（native 动态库），所以本模块只有 native 目标。
 
 supported_targets = "+native"
@@ -31,7 +25,6 @@ options(
     "moonbitlang/core/async/fs",
     "moonbitlang/core/async/http",
     "moonbitlang/core/async/raw_fd",
-    "moonbitlang/core/env",
   ],
 )
 
