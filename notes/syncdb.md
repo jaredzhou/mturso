@@ -1,6 +1,6 @@
 # syncdb 设计与实现规划
 
-状态：设计已确认，尚未实现。Turso 版本基线为 **v0.8.2**。
+状态：外部 server 的客户端主路径已实现（bootstrap / push / pull / checkpoint / stats，tickets #14-#17）；协议兼容的自研 server 仍待实现。Turso 版本基线为 **v0.8.2**。
 
 ## 目标
 
@@ -146,12 +146,12 @@ fn SyncServer::base_url(self : SyncServer) -> String
 
 ## 关闭语义
 
-`SyncDatabase::close()`：
+`SyncDatabase::close()` 在 MoonBit 单线程 async 运行时不阻塞事件循环：
 
 1. 标记 closed，拒绝新同步操作和连接 checkout；
-2. 等待当前同步 operation 结束；
-3. 关闭所有 idle/busy SQL 连接；
-4. deinit sync engine。
+2. 若当前没有 operation，立即 finalize；
+3. 若已有 operation 在飞，由该 operation 的退出路径在结束后关闭所有 idle/busy SQL 连接并 deinit sync engine；
+4. 多条退出路径用 finalized 标志保证幂等。
 
 `SyncServer::stop()` 与数据库关闭独立，先停止接受请求，再等待 server 结束。
 

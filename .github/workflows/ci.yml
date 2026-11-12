@@ -70,6 +70,7 @@ jobs:
             tar -xJ -C "$dir"
           bin="$(find "$dir" -type f -name tursodb -perm -u+x | head -n1)"
           test -n "$bin"
+          "$bin" --version | grep -F "0.8.2"
           echo "TURSODB=$bin" >> "$GITHUB_ENV"
 
       # Type-check with warnings as errors.
@@ -124,6 +125,8 @@ jobs:
           Expand-Archive -LiteralPath $archive -DestinationPath $dir -Force
           $bin = Get-ChildItem -LiteralPath $dir -Recurse -Filter "tursodb.exe" | Select-Object -First 1
           if (-not $bin) { throw "tursodb.exe not found" }
+          $version = (& $bin.FullName --version | Out-String)
+          if ($version -notmatch "0\.8\.2") { throw "unexpected tursodb version: $version" }
           "TURSODB=$($bin.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Check

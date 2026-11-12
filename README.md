@@ -30,6 +30,7 @@ async fn main {
 - **First-class transactions** — `begin_tx` / `commit` / `rollback`, with `Deferred`, `Immediate`, `Exclusive`, and Turso's `BEGIN CONCURRENT`; `begin_func` commits on success and rolls back on error.
 - **Async without blocking the event loop** — every connection runs on its own external C worker thread, so a slow query never freezes the MoonBit event loop; `max_conns` keeps that thread budget under control.
 - **Retries that understand contention** — `retry_tx` reruns a whole transaction on `Busy` (WAL write lock) or `Conflict` (MVCC write-write), with full-jitter backoff and a bounded budget.
+- **Offline-first sync** — `SyncDatabase` wraps Turso's sync engine with `push`, `pull`, `checkpoint`, and `stats`; SQL reads and transactions use the same public `Connection`.
 - **Errors you can match on** — `TursoError` separates connection, query, no-rows, busy, and conflict failures.
 - **Deterministic shutdown** — `close()` joins worker threads, and `db.close()` cascades to every pooled connection.
 - **No separate engine install** — the Turso library ships with the binding and is loaded at runtime; consumers never write linker flags.
@@ -38,10 +39,10 @@ async fn main {
 
 | Platform / target | Status | Notes |
 | --- | --- | --- |
-| **Linux x86_64** | ✅ tested | `moon test --target native` green; CI runs it on every push and PR |
+| **Linux x86_64** | ✅ tested | CI runs the full suite plus local sync-server acceptance against pinned `tursodb` 0.8.2 |
 | **Linux aarch64** | ✅ tested | CI runs the suite on `ubuntu-24.04-arm` |
 | **macOS arm64** | ✅ tested | CI runs the suite on `macos-latest` |
-| **Windows x64** | ✅ tested | MSVC build; CI runs the suite on `windows-latest`. The DLL is loaded at runtime and the worker uses Win32 threads plus an anonymous-pipe result channel |
+| **Windows x64** | ✅ tested | MSVC build; CI runs the full suite plus local sync-server acceptance. The DLL is loaded at runtime and workers use Win32 threads plus anonymous pipes |
 | **WebAssembly / edge** | 🧪 spike | MoonBit `wasm` + Turso wasm runs end to end under a Node worker host; browser/OPFS and a public API remain planned. See [`notes/wasm-spike.md`](notes/wasm-spike.md) and [#10](https://github.com/jaredzhou/mturso/issues/10) |
 
 macOS x86_64 is deliberately absent (MoonBit ships no `darwin-x86_64` toolchain). Windows ARM64 is unsupported because Turso v0.8.2 ships a 0-byte placeholder DLL in its `windows_arm64` package.
@@ -259,6 +260,41 @@ async fn demo() -> Unit raise @mturso.TursoError {
 }
 ```
 
+### Offline-first sync
+
+`SyncDatabase` keeps a local database synchronized with a Turso Cloud database
+or a local `tursodb --sync-server`. SQL still goes through the public
+`Connection`; synchronization operations are explicit and serialized.
+
+```moonbit
+async fn sync_demo() -> Unit raise @mturso.TursoError {
+  let config = @mturso.SyncConfig::new(
+    "./local.db",
+    remote_url="http://127.0.0.1:8080",
+    // auth_token=Some("..."), // required when the remote enables auth
+    client_name=Some("my-app"),
+    long_poll_timeout_ms=30_000,
+  )
+  let db = @mturso.SyncDatabase::open(config) // bootstrap if local is empty
+  defer db.close()
+
+  let conn = db.connect()
+  defer conn.close()
+  ignore(conn.execute("insert into notes(body) values ('offline edit')"))
+  db.push()
+
+  let changed = db.pull() // true when remote changes were applied
+  let stats = db.stats()
+  println("revision=\{stats.revision} received=\{stats.network_received_bytes}")
+  db.checkpoint()
+}
+```
+
+`bootstrap_if_empty=false` allows opening without a reachable remote. A later
+`push()` or `pull()` reports a structured `TursoError::SyncError`; committed
+local changes remain available for retry. `close()` rejects new operations
+immediately and finalizes native resources after any in-flight operation ends.
+
 ### Error handling
 
 ```moonbit
@@ -284,6 +320,12 @@ async fn demo(conn : @mturso.Connection) -> Unit raise @mturso.TursoError {
 | `Database::stats()/max_conns()/is_closed()` | Pool observability |
 | `Database::set_journal_mode(Wal/Mvcc)/set_default_tx_mode()` | File-level journal mode and default transaction mode |
 | `Database::close()` | Idempotent; cascades to every connection, then deinits |
+| `SyncConfig::new(path, remote_url~, auth_token?)` | Sync database path, remote URL/token, bootstrap and long-poll settings |
+| `SyncDatabase::open(config)` | **async**; open locally and bootstrap when enabled |
+| `SyncDatabase::connect()` | **async**; return the same public `Connection` used by local databases |
+| `SyncDatabase::push()/pull()/checkpoint()` | **async**; serialize sync operations on one database |
+| `SyncDatabase::stats()` | **async**; CDC/WAL/network counters plus opaque remote revision |
+| `SyncDatabase::close()` | Idempotent; reject new work, then finalize after an active operation drains |
 | `Connection::open(path)` | Convenience connection backed by a private `max_conns=1` database |
 | `Connection::query/query_one/execute` | **async**; typed, streaming rows / `ExecResult` |
 | `Connection::fetch/fetch_one` | Typed collection via `FromRow` |
@@ -293,13 +335,15 @@ async fn demo(conn : @mturso.Connection) -> Unit raise @mturso.TursoError {
 | `Connection::last_insert_rowid()/sqlite_version()/is_closed()` | Observability |
 | `DbTx::query/query_one/execute` | Run inside the transaction |
 | `DbTx::commit()/rollback()` | Finish (once) |
-| `TursoError` | `ConnectionError` / `QueryError` / `NoRows` / `Busy` / `Conflict` |
+| `TursoError` | `ConnectionError` / `QueryError` / `NoRows` / `Busy` / `Conflict` / `SyncError` |
 
 ## Known limitations
 
 - **Multi-statement `execute` (DML)** — `query` rejects multi-statement SQL; `execute` runs multiple DML statements in order. A script that mixes DDL and a later write in one call can trip an engine bug (a `btree` panic), so run DDL as its own `execute`.
 - **No cancellation or timeouts** — once submitted, a statement runs to completion (Turso's C ABI has no cross-thread cancel).
 - **Platform boundaries** — native Linux, macOS arm64, and Windows x64 are supported. Windows ARM64 and WebAssembly browser integration are not.
+- **Sync scope** — the first sync release supports one remote database and full bootstrap. Partial sync, namespace routing, remote encryption, and multi-database `--sync-dir` are not exposed yet. Sync databases require an explicit `checkpoint()`.
+- **Turso Cloud is opt-in** — deterministic CI uses the pinned local `tursodb` server. A real Cloud smoke test requires a database URL and token supplied by the caller.
 - **Preview engine** — Turso 0.8.2 is a preview release with many features behind experimental flags; don't treat it as production SQLite.
 
 ## Roadmap
@@ -310,7 +354,7 @@ async fn demo(conn : @mturso.Connection) -> Unit raise @mturso.TursoError {
 
 ```bash
 moon check --target native      # type check
-moon test  --target native      # run the test suite (36 tests)
+moon test  --target native      # run the test suite (50 tests)
 ```
 
 Do not run a bare `moon fmt` over the sources: this toolchain respells `Int` to `Int32`. If you do, revert with `sed -i 's/Int32/Int/g'` on the touched files.
@@ -328,6 +372,30 @@ uses it automatically for these targets.
 
 Override `SYNC_DB`, `SYNC_ADDR`, or `TURSODB` when needed. `make server-wrapper`
 starts the `cmd/server` MoonBit executable instead of invoking `tursodb` directly.
+
+Real Turso Cloud validation is optional because deterministic CI uses the pinned
+local server. To smoke-test a Cloud database, provide the URL and token through
+the environment and construct `SyncConfig` with them; do not commit or print the
+token:
+
+```moonbit
+async fn cloud_smoke() -> Unit raise @mturso.TursoError {
+  let url = @env.get_env_var("TURSO_SYNC_URL").unwrap_or("")
+  let token = @env.get_env_var("TURSO_AUTH_TOKEN").unwrap_or("")
+  if url == "" || token == "" {
+    fail("set TURSO_SYNC_URL and TURSO_AUTH_TOKEN")
+  }
+  let db = @mturso.SyncDatabase::open(@mturso.SyncConfig::new(
+    "./cloud-smoke.db",
+    remote_url=url,
+    auth_token=Some(token),
+  ))
+  defer db.close()
+  let conn = db.connect()
+  defer conn.close()
+  ignore(conn.execute("select 1"))
+}
+```
 
 The Linux x86_64 and Windows x64 Turso libraries are vendored in `libs/` with
 SHA-256 files. They are loaded at runtime, so neither the repo nor a consumer
@@ -349,7 +417,9 @@ Layout:
 | `rows.mbt` | streaming `Rows` reader + frame parsing |
 | `tx.mbt` / `retry.mbt` | transactions and retry helpers |
 | `pool.mbt` | `PoolStats` + `Database`'s pool-side impls |
-| `ffi/` | `extern "c"` declarations + thin C stub + vendored `turso.h` |
+| `sync.mbt` | `SyncDatabase`, operation driver, and MoonBit-owned sync I/O |
+| `server/` | loopback `SyncServer` lifecycle around pinned `tursodb` |
+| `ffi/` | `extern "c"` declarations + thin C stub + vendored Turso headers |
 | `design/` | Compiler-checked design spec (`moon check` clean) |
 | `libs/` | The Turso C shared library |
 | `notes/` | Research notes on the Turso engine |
