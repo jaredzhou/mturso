@@ -92,6 +92,9 @@ jobs:
           moon build cmd/server --target native
           echo "MTURSO_NATIVE_SERVER=$PWD/_build/native/debug/build/cmd/server/server.exe" >> "$GITHUB_ENV"
 
+      - name: Check tursogo-serverless test module
+        run: cd tursogo && go test ./...
+
       # Build and run all tests.
       - name: Test
         run: moon test --target native --deny-warn
@@ -144,6 +147,12 @@ jobs:
           moon build cmd/server --target native
           $exe = Join-Path $PWD "_build/native/debug/build/cmd/server/server.exe"
           "MTURSO_NATIVE_SERVER=$exe" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Check tursogo-serverless test module
+        shell: pwsh
+        run: |
+          Push-Location tursogo
+          try { go test ./... } finally { Pop-Location }
 
       - name: Test
         shell: pwsh

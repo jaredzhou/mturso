@@ -367,6 +367,7 @@ make native-server              # build the self-hosted pipeline server
 make test-server                # lifecycle + native pipeline tests
 make server                     # start the self-hosted pipeline server
 make server-tursodb             # start the external tursodb sync server
+make test-tursogo               # run Go serverless SDK against the running server
 ```
 
 On Windows, install GNU Make; the `Makefile` locates Git Bash through `git` and

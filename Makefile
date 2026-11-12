@@ -13,9 +13,10 @@ endif
 TURSODB ?= $(TURSODB_CACHE)/$(TURSODB_EXE)
 SYNC_DB ?= .cache/turso-sync-server.db
 SYNC_ADDR ?= 127.0.0.1:8080
+SYNC_URL ?= http://$(SYNC_ADDR)
 NATIVE_SERVER ?= $(CURDIR)/_build/native/debug/build/cmd/server/server.exe
 
-.PHONY: check test download-cli native-server native-server-run test-server server server-tursodb server-wrapper fmt
+.PHONY: check test download-cli native-server native-server-run test-server test-tursogo server server-tursodb server-wrapper fmt
 
 check:
 	$(RUN_SHELL) '$(MOON) check --target native --deny-warn'
@@ -34,6 +35,9 @@ native-server-run: native-server
 
 test-server: download-cli native-server
 	$(RUN_SHELL) 'TURSODB="$(TURSODB)" MTURSO_NATIVE_SERVER="$(NATIVE_SERVER)" $(MOON) test --target native --deny-warn server'
+
+test-tursogo:
+	$(RUN_SHELL) 'cd tursogo && go run . -url "$(SYNC_URL)"'
 
 server: native-server
 	$(RUN_SHELL) 'mkdir -p "$(dir $(SYNC_DB))" && "$(NATIVE_SERVER)" "$(SYNC_DB)" "$(SYNC_ADDR)"'
