@@ -6,10 +6,19 @@ import {
 }
 
 // Values
+pub async fn process_cursor_request(@mturso.Database, Bytes) -> NativeHttpResponse
+
+pub async fn process_pipeline_request(@mturso.Database, Bytes) -> NativeHttpResponse
 
 // Errors
 
 // Types and methods
+pub(all) struct NativeHttpResponse {
+  status : Int
+  content_type : String
+  body : String
+}
+
 pub struct SyncServer {
   // private fields
 }

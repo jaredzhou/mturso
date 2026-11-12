@@ -1,4 +1,24 @@
 ///|
+/// Framework-independent HTTP payload returned by the native sync server.
+pub(all) struct NativeHttpResponse {
+  status : Int
+  content_type : String
+  body : String
+}
+
+///|
+fn native_error_response(
+  status : Int,
+  message : String,
+) -> NativeHttpResponse {
+  {
+    status,
+    content_type: "application/json",
+    body: error_response(status, message).stringify(),
+  }
+}
+
+///|
 fn object(entries : Array[(String, @json.Json)]) -> @json.Json {
   let fields = Map([])
   for entry in entries {
@@ -375,49 +395,28 @@ async fn process_request(
 }
 
 ///|
-async fn handle_pipeline(db : @mturso.Database, ctx : @pony.Context) -> Unit {
-  let body = try ctx.req_body.read_all() catch {
-    error => {
-      ctx.write_json(400, error_response(400, "\{error}"))
-      return
-    }
-  } noraise {
-    value => value
-  }
+pub async fn process_pipeline_request(
+  db : @mturso.Database,
+  body : Bytes,
+) -> NativeHttpResponse {
   let request = try @json.parse(@utf8.decode_lossy(body)) catch {
-    error => {
-      ctx.write_json(400, error_response(400, "\{error}"))
-      return
-    }
+    error => return native_error_response(400, "\{error}")
   } noraise {
     value => value
   }
   let fields = match request {
     @json.Json::Object(fields) => fields
-    _ => {
-      ctx.write_json(400, error_response(400, "request must be an object"))
-      return
-    }
+    _ => return native_error_response(400, "request must be an object")
   }
   if field(fields, "baton") is Some(@json.Json::String(_)) {
-    ctx.write_json(
-      400,
-      error_response(400, "streams and batons are not supported"),
-    )
-    return
+    return native_error_response(400, "streams and batons are not supported")
   }
   let requests = match field(fields, "requests") {
     Some(@json.Json::Array(requests)) => requests
-    _ => {
-      ctx.write_json(400, error_response(400, "requests must be an array"))
-      return
-    }
+    _ => return native_error_response(400, "requests must be an array")
   }
   let session = try db.connect() catch {
-    error => {
-      ctx.write_json(500, error_response(500, @debug.to_string(error)))
-      return
-    }
+    error => return native_error_response(500, @debug.to_string(error))
   } noraise {
     value => value
   }
@@ -431,68 +430,41 @@ async fn handle_pipeline(db : @mturso.Database, ctx : @pony.Context) -> Unit {
     ("base_url", @json.Json::null()),
     ("results", @json.Json::array(results)),
   ])
-  ctx.write_json(200, response)
+  { status: 200, content_type: "application/json", body: response.stringify(), }
 }
 
 ///|
-async fn handle_cursor(db : @mturso.Database, ctx : @pony.Context) -> Unit {
-  let body = try ctx.req_body.read_all() catch {
-    error => {
-      ctx.write_json(400, error_response(400, "\{error}"))
-      return
-    }
-  } noraise {
-    value => value
-  }
+pub async fn process_cursor_request(
+  db : @mturso.Database,
+  body : Bytes,
+) -> NativeHttpResponse {
   let request = try @json.parse(@utf8.decode_lossy(body)) catch {
-    error => {
-      ctx.write_json(400, error_response(400, "\{error}"))
-      return
-    }
+    error => return native_error_response(400, "\{error}")
   } noraise {
     value => value
   }
   let fields = match request {
     @json.Json::Object(fields) => fields
-    _ => {
-      ctx.write_json(400, error_response(400, "request must be an object"))
-      return
-    }
+    _ => return native_error_response(400, "request must be an object")
   }
   if field(fields, "baton") is Some(@json.Json::String(_)) {
-    ctx.write_json(
-      400,
-      error_response(400, "streams and batons are not supported"),
-    )
-    return
+    return native_error_response(400, "streams and batons are not supported")
   }
   let batch = match field(fields, "batch") {
     Some(value) =>
       try as_object(value) catch {
-        _ => {
-          ctx.write_json(400, error_response(400, "invalid batch"))
-          return
-        }
+        _ => return native_error_response(400, "invalid batch")
       } noraise {
         value => value
       }
-    None => {
-      ctx.write_json(400, error_response(400, "batch is required"))
-      return
-    }
+    None => return native_error_response(400, "batch is required")
   }
   let steps = match field(batch, "steps") {
     Some(@json.Json::Array(steps)) => steps
-    _ => {
-      ctx.write_json(400, error_response(400, "batch.steps is required"))
-      return
-    }
+    _ => return native_error_response(400, "batch.steps is required")
   }
   let session = try db.connect() catch {
-    error => {
-      ctx.write_json(500, error_response(500, @debug.to_string(error)))
-      return
-    }
+    error => return native_error_response(500, @debug.to_string(error))
   } noraise {
     value => value
   }
@@ -582,82 +554,9 @@ async fn handle_cursor(db : @mturso.Database, ctx : @pony.Context) -> Unit {
   lines.write_string(
     "{\"type\":\"replication_index\",\"replication_index\":null}\n",
   )
-  ctx.set_content_type("application/x-ndjson")
-  ctx.write_text(200, lines.to_string())
-}
-
-///|
-async fn main {
-  let args = @env.args()
-  if args.length() < 2 {
-    println("usage: mturso-native-server <database-path> [loopback-address]")
-    @env.exit(1)
+  {
+    status: 200,
+    content_type: "application/x-ndjson",
+    body: lines.to_string(),
   }
-  let database_path = args[1]
-  let address = if args.length() >= 3 { args[2] } else { "127.0.0.1:8080" }
-  if !(address.has_prefix("127.0.0.1:") || address.has_prefix("[::1]:")) {
-    println("native server only supports loopback addresses")
-    @env.exit(1)
-  }
-  let db = try @mturso.Database::open(database_path) catch {
-    error => {
-      println("failed to open database: \{@debug.to_string(error)}")
-      @env.exit(1)
-    }
-  } noraise {
-    value => value
-  }
-  defer db.close()
-  let router = @pony.Router::Router()
-  try
-    router.add(@pony.HttpMethod::Post, "/v2/pipeline", ctx => {
-      handle_pipeline(db, ctx)
-    })
-  catch {
-    error => {
-      println("failed to register /v2/pipeline: \{error}")
-      @env.exit(1)
-    }
-  } noraise {
-    _ => ()
-  }
-  try
-    router.add(@pony.HttpMethod::Post, "/v3/pipeline", ctx => {
-      handle_pipeline(db, ctx)
-    })
-  catch {
-    error => {
-      println("failed to register /v3/pipeline: \{error}")
-      @env.exit(1)
-    }
-  } noraise {
-    _ => ()
-  }
-  try
-    router.add(@pony.HttpMethod::Post, "/v3/cursor", ctx => {
-      handle_cursor(db, ctx)
-    })
-  catch {
-    error => {
-      println("failed to register /v3/cursor: \{error}")
-      @env.exit(1)
-    }
-  } noraise {
-    _ => ()
-  }
-  try
-    router.add(@pony.HttpMethod::Options, "/*", ctx => ctx.no_content())
-  catch {
-    error => {
-      println("failed to register OPTIONS route: \{error}")
-      @env.exit(1)
-    }
-  } noraise {
-    _ => ()
-  }
-  router.set_not_found(ctx => {
-    ctx.write_json(404, error_response(404, "Not Found"))
-  })
-  println("native sync server listening at http://\{address}")
-  @pony.start(address, router)
 }

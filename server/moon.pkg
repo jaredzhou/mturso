@@ -8,18 +8,17 @@ import {
   "moonbitlang/core/async/http",
   "moonbitlang/core/async/process",
   "moonbitlang/core/async/socket",
-  "moonbitlang/core/env",
-}
-
-import {
   "moonbitlang/core/debug",
+  "moonbitlang/core/encoding/base64",
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/env",
   "moonbitlang/core/json",
-} for "test"
+  "moonbitlang/core/string",
+}
 
 options(
   "allow-experimental-packages": [
     "moonbitlang/core/async",
-    "moonbitlang/core/async/fs",
     "moonbitlang/core/async/fs",
     "moonbitlang/core/async/http",
     "moonbitlang/core/async/process",

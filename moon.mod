@@ -15,5 +15,5 @@ description = "MoonBit bindings for Turso Database, layered on the official C AB
 preferred_target = "native"
 
 import {
-  "jaredzhou/pony@0.6.1",
+  "jaredzhou/pony@0.7.0",
 }

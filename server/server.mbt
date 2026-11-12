@@ -223,7 +223,7 @@ pub async fn SyncServer::start(
   let address = allocate_port(config.address)
   let process_args = match config.backend {
     External => [config.database_path, "--sync-server", address]
-    Native => [config.database_path, address]
+    Native => ["--serve-native", config.database_path, address]
   }
   let diagnostic_path = config.database_path + ".native-server.log"
   let stderr = match config.backend {
@@ -270,7 +270,7 @@ pub async fn SyncServer::start(
   match startup {
     Listening => ()
     Exited(code) => {
-      let diagnostics = @fs.read_text(diagnostic_path) catch {
+      let diagnostics = try @fs.read_text(diagnostic_path) catch {
         _ => ""
       } noraise {
         value => value

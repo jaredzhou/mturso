@@ -365,28 +365,35 @@ The sync-server development helpers download the pinned Turso CLI into `.cache/`
 make download-cli               # fetch and verify tursodb 0.8.2
 make native-server              # build the self-hosted pipeline server
 make test-server                # lifecycle + native pipeline tests
-make server                     # start foreground server on 127.0.0.1:8080
-make native-server-run          # start the self-hosted pipeline server
+make server                     # start the self-hosted pipeline server
+make server-tursodb             # start the external tursodb sync server
 ```
 
 On Windows, install GNU Make; the `Makefile` locates Git Bash through `git` and
 uses it automatically for these targets.
 
 Override `SYNC_DB`, `SYNC_ADDR`, or `TURSODB` when needed. `make server-wrapper`
-starts the `cmd/server` MoonBit executable instead of invoking `tursodb` directly.
+uses the unified `cmd/server` launcher with external `tursodb`.
 
 `SyncServerConfig` selects the external pinned CLI by default. The native
-backend uses the in-process `jaredzhou/pony@0.6.1` HTTP server and Turso engine:
+backend uses the in-process `jaredzhou/pony@0.7.0` HTTP server and Turso engine.
+Both the launcher and the native serving process are the same `cmd/server`
+executable; `--serve-native` is its internal serving mode:
 
 ```moonbit
 let server = @server.SyncServer::start(
   @server.SyncServerConfig::new(
     "./server.db",
     backend=@server.SyncServerBackend::Native,
-    native_executable=Some("./native-server"),
+    native_executable=Some("./server"),
   ),
 )
 ```
+
+From the CLI, the default mode starts the self-hosted Pony server directly in
+the same process, without a launcher. `--tursodb` selects external `tursodb`.
+The internal `--serve-native` flag exists only for library-managed
+`SyncServer::start(Native)`.
 
 The native backend implements `/v2/pipeline`, `/v3/pipeline`, and
 `/v3/cursor`, including batches, conditional steps, positional parameters,
@@ -439,7 +446,7 @@ Layout:
 | `pool.mbt` | `PoolStats` + `Database`'s pool-side impls |
 | `sync.mbt` | `SyncDatabase`, operation driver, and MoonBit-owned sync I/O |
 | `server/` | shared external/native `SyncServer` facade and lifecycle |
-| `cmd/native-server/` | self-hosted loopback SQL-over-HTTP pipeline server |
+| `cmd/server/` | unified external/native sync-server launcher and Pony HTTP adapter |
 | `ffi/` | `extern "c"` declarations + thin C stub + vendored Turso headers |
 | `design/` | Compiler-checked design spec (`moon check` clean) |
 | `libs/` | The Turso C shared library |
