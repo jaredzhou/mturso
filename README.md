@@ -323,6 +323,9 @@ make test-server                # run sync-server lifecycle tests
 make server                     # start foreground server on 127.0.0.1:8080
 ```
 
+On Windows, install GNU Make; the `Makefile` locates Git Bash through `git` and
+uses it automatically for these targets.
+
 Override `SYNC_DB`, `SYNC_ADDR`, or `TURSODB` when needed. `make server-wrapper`
 starts the `cmd/server` MoonBit executable instead of invoking `tursodb` directly.
 
