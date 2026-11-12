@@ -149,12 +149,14 @@ pub fn SyncConfig::new(String, remote_url~ : String, auth_token? : String?, clie
 pub struct SyncDatabase {
   // private fields
 }
+pub async fn SyncDatabase::checkpoint(Self) -> Unit raise TursoError
 pub fn SyncDatabase::close(Self) -> Unit
 pub async fn SyncDatabase::connect(Self) -> Connection raise TursoError
 pub fn SyncDatabase::is_closed(Self) -> Bool
 pub async fn SyncDatabase::open(SyncConfig) -> Self raise TursoError
 pub async fn SyncDatabase::pull(Self) -> Bool raise TursoError
 pub async fn SyncDatabase::push(Self) -> Unit raise TursoError
+pub async fn SyncDatabase::stats(Self) -> SyncStats raise TursoError
 
 #derive(@debug.Debug)
 pub(all) enum SyncErrorKind {
@@ -164,6 +166,17 @@ pub(all) enum SyncErrorKind {
   RemoteBusy
   RemoteConflict
   Internal
+}
+
+pub(all) struct SyncStats {
+  cdc_operations : Int64
+  main_wal_size : Int64
+  revert_wal_size : Int64
+  last_pull_unix_time : Int64
+  last_push_unix_time : Int64
+  network_sent_bytes : Int64
+  network_received_bytes : Int64
+  revision : String
 }
 
 #derive(Eq, @debug.Debug)

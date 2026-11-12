@@ -31,6 +31,10 @@ pub type SyncIo
 pub type SyncChanges
 
 ///|
+/// Opaque sync stats snapshot.
+pub type SyncStats
+
+///|
 /// 打开数据库。`path` 为 `:memory:` 或文件路径。
 #borrow(path)
 pub extern "c" fn db_open(path : Bytes) -> Db = "mturso_db_open"
@@ -72,6 +76,14 @@ pub extern "c" fn sync_db_push(db : SyncDb) -> SyncOp = "mturso_sync_db_push"
 pub extern "c" fn sync_db_wait_changes(db : SyncDb) -> SyncOp = "mturso_sync_db_wait_changes"
 
 ///|
+#borrow(db)
+pub extern "c" fn sync_db_checkpoint(db : SyncDb) -> SyncOp = "mturso_sync_db_checkpoint"
+
+///|
+#borrow(db)
+pub extern "c" fn sync_db_stats(db : SyncDb) -> SyncOp = "mturso_sync_db_stats"
+
+///|
 #borrow(op)
 pub extern "c" fn sync_op_resume(op : SyncOp) -> Int = "mturso_sync_op_resume"
 
@@ -101,6 +113,46 @@ pub extern "c" fn sync_changes_is_null(changes : SyncChanges) -> Bool = "mturso_
 ///|
 #borrow(changes)
 pub extern "c" fn sync_changes_close(changes : SyncChanges) = "mturso_sync_changes_close"
+
+///|
+#borrow(op)
+pub extern "c" fn sync_op_extract_stats(op : SyncOp) -> SyncStats = "mturso_sync_op_extract_stats"
+
+///|
+#borrow(stats)
+pub extern "c" fn sync_stats_cdc_operations(stats : SyncStats) -> Int64 = "mturso_sync_stats_cdc_operations"
+
+///|
+#borrow(stats)
+pub extern "c" fn sync_stats_main_wal_size(stats : SyncStats) -> Int64 = "mturso_sync_stats_main_wal_size"
+
+///|
+#borrow(stats)
+pub extern "c" fn sync_stats_revert_wal_size(stats : SyncStats) -> Int64 = "mturso_sync_stats_revert_wal_size"
+
+///|
+#borrow(stats)
+pub extern "c" fn sync_stats_last_pull_unix_time(stats : SyncStats) -> Int64 = "mturso_sync_stats_last_pull_unix_time"
+
+///|
+#borrow(stats)
+pub extern "c" fn sync_stats_last_push_unix_time(stats : SyncStats) -> Int64 = "mturso_sync_stats_last_push_unix_time"
+
+///|
+#borrow(stats)
+pub extern "c" fn sync_stats_network_sent_bytes(stats : SyncStats) -> Int64 = "mturso_sync_stats_network_sent_bytes"
+
+///|
+#borrow(stats)
+pub extern "c" fn sync_stats_network_received_bytes(stats : SyncStats) -> Int64 = "mturso_sync_stats_network_received_bytes"
+
+///|
+#borrow(stats)
+pub extern "c" fn sync_stats_revision(stats : SyncStats) -> Bytes = "mturso_sync_stats_revision"
+
+///|
+#borrow(stats)
+pub extern "c" fn sync_stats_close(stats : SyncStats) = "mturso_sync_stats_close"
 
 ///|
 #borrow(db)

@@ -37,6 +37,19 @@ pub fn SyncConfig::new(
 }
 
 ///|
+/// Snapshot of local and network synchronization state.
+pub(all) struct SyncStats {
+  cdc_operations : Int64
+  main_wal_size : Int64
+  revert_wal_size : Int64
+  last_pull_unix_time : Int64
+  last_push_unix_time : Int64
+  network_sent_bytes : Int64
+  network_received_bytes : Int64
+  revision : String
+}
+
+///|
 /// A local database synchronized with a remote Turso database.
 pub struct SyncDatabase {
   priv raw : @ffi.SyncDb
@@ -47,6 +60,7 @@ pub struct SyncDatabase {
   priv sem : @async.Semaphore
   priv operation_lock : @async.Semaphore
   priv closed : Ref[Bool]
+  priv finalized : Ref[Bool]
 }
 
 ///|
@@ -438,6 +452,7 @@ pub async fn SyncDatabase::open(
     sem: @async.Semaphore::Semaphore(n),
     operation_lock: @async.Semaphore::Semaphore(1),
     closed: Ref(false),
+    finalized: Ref(false),
   }
   errdefer db.close()
   let io : SyncIoContext = {
@@ -472,6 +487,25 @@ fn SyncDatabase::release_connection(
 }
 
 ///|
+async fn SyncDatabase::begin_operation(
+  self : SyncDatabase,
+) -> Unit raise TursoError {
+  self.operation_lock.acquire()
+  if self.closed.val {
+    self.operation_lock.release()
+    raise TursoError::ConnectionError("sync database is closed")
+  }
+}
+
+///|
+fn SyncDatabase::end_operation(self : SyncDatabase) -> Unit {
+  self.operation_lock.release()
+  if self.closed.val {
+    self.finalize_close()
+  }
+}
+
+///|
 /// Borrow a connection from the sync database.
 pub async fn SyncDatabase::connect(
   self : SyncDatabase,
@@ -479,6 +513,8 @@ pub async fn SyncDatabase::connect(
   if self.closed.val {
     raise TursoError::ConnectionError("sync database is closed")
   }
+  self.begin_operation()
+  defer self.end_operation()
   self.sem.acquire()
   errdefer self.sem.release()
   let raw = if self.idle_len.val > 0 {
@@ -528,8 +564,8 @@ pub async fn SyncDatabase::push(self : SyncDatabase) -> Unit raise TursoError {
   if self.closed.val {
     raise TursoError::ConnectionError("sync database is closed")
   }
-  self.operation_lock.acquire()
-  defer self.operation_lock.release()
+  self.begin_operation()
+  defer self.end_operation()
   let io : SyncIoContext = {
     raw_db: self.raw,
     base_url: trim_trailing_slashes(self.config.remote_url),
@@ -547,8 +583,8 @@ pub async fn SyncDatabase::pull(self : SyncDatabase) -> Bool raise TursoError {
   if self.closed.val {
     raise TursoError::ConnectionError("sync database is closed")
   }
-  self.operation_lock.acquire()
-  defer self.operation_lock.release()
+  self.begin_operation()
+  defer self.end_operation()
   let io : SyncIoContext = {
     raw_db: self.raw,
     base_url: trim_trailing_slashes(self.config.remote_url),
@@ -578,12 +614,74 @@ pub async fn SyncDatabase::pull(self : SyncDatabase) -> Bool raise TursoError {
 }
 
 ///|
-/// Close the sync database and every pooled connection it owns.
-pub fn SyncDatabase::close(self : SyncDatabase) -> Unit {
+/// Checkpoint the local sync database WAL while preserving sync metadata.
+pub async fn SyncDatabase::checkpoint(
+  self : SyncDatabase,
+) -> Unit raise TursoError {
   if self.closed.val {
+    raise TursoError::ConnectionError("sync database is closed")
+  }
+  self.begin_operation()
+  defer self.end_operation()
+  let io : SyncIoContext = {
+    raw_db: self.raw,
+    base_url: trim_trailing_slashes(self.config.remote_url),
+    auth_token: self.config.auth_token,
+  }
+  let op = @ffi.sync_db_checkpoint(self.raw)
+  defer @ffi.sync_op_close(op)
+  check_sync_error()
+  drive_sync_operation(io, op)
+}
+
+///|
+/// Return a snapshot of synchronization statistics.
+pub async fn SyncDatabase::stats(
+  self : SyncDatabase,
+) -> SyncStats raise TursoError {
+  if self.closed.val {
+    raise TursoError::ConnectionError("sync database is closed")
+  }
+  self.begin_operation()
+  defer self.end_operation()
+  let io : SyncIoContext = {
+    raw_db: self.raw,
+    base_url: trim_trailing_slashes(self.config.remote_url),
+    auth_token: self.config.auth_token,
+  }
+  let op = @ffi.sync_db_stats(self.raw)
+  defer @ffi.sync_op_close(op)
+  check_sync_error()
+  drive_sync_operation(io, op)
+  if @ffi.sync_op_result_kind(op) != 3 {
+    raise TursoError::SyncError(
+      SyncErrorKind::Protocol,
+      "sync stats returned an unexpected result",
+    )
+  }
+  let stats = @ffi.sync_op_extract_stats(op)
+  defer @ffi.sync_stats_close(stats)
+  check_sync_error()
+  let revision = @utf8.decode_lossy(@ffi.sync_stats_revision(stats))
+  check_sync_error()
+  {
+    cdc_operations: @ffi.sync_stats_cdc_operations(stats),
+    main_wal_size: @ffi.sync_stats_main_wal_size(stats),
+    revert_wal_size: @ffi.sync_stats_revert_wal_size(stats),
+    last_pull_unix_time: @ffi.sync_stats_last_pull_unix_time(stats),
+    last_push_unix_time: @ffi.sync_stats_last_push_unix_time(stats),
+    network_sent_bytes: @ffi.sync_stats_network_sent_bytes(stats),
+    network_received_bytes: @ffi.sync_stats_network_received_bytes(stats),
+    revision,
+  }
+}
+
+///|
+fn SyncDatabase::finalize_close(self : SyncDatabase) -> Unit {
+  if self.finalized.val {
     return
   }
-  self.closed.val = true
+  self.finalized.val = true
   for i in 0..<self.idle_len.val {
     @ffi.conn_close(self.idle[i])
   }
@@ -594,6 +692,19 @@ pub fn SyncDatabase::close(self : SyncDatabase) -> Unit {
     }
   }
   @ffi.sync_db_close(self.raw)
+}
+
+///|
+/// Reject new work and finalize the sync database once active work completes.
+pub fn SyncDatabase::close(self : SyncDatabase) -> Unit {
+  if self.closed.val {
+    return
+  }
+  self.closed.val = true
+  if self.operation_lock.try_acquire() {
+    self.operation_lock.release()
+    self.finalize_close()
+  }
 }
 
 ///|

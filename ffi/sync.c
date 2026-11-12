@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "mturso_internal.h"
@@ -17,6 +18,11 @@ struct mturso_sync_io {
 
 struct mturso_sync_changes {
   const turso_sync_changes_t *changes;
+};
+
+struct mturso_sync_stats {
+  turso_sync_stats_t stats;
+  char *revision;
 };
 
 static int sync_error_kind(turso_status_code_t status) {
@@ -81,6 +87,12 @@ static void sync_changes_finalize(void *self) {
   }
 }
 
+static void sync_stats_finalize(void *self) {
+  mturso_sync_stats_t *handle = (mturso_sync_stats_t *)self;
+  free(handle->revision);
+  handle->revision = NULL;
+}
+
 static mturso_sync_db_t *sync_db_alloc(void) {
   mturso_sync_db_t *handle = (mturso_sync_db_t *)moonbit_make_external_object(
       sync_db_finalize, sizeof(mturso_sync_db_t));
@@ -107,6 +119,13 @@ static mturso_sync_changes_t *sync_changes_alloc(void) {
       (mturso_sync_changes_t *)moonbit_make_external_object(
           sync_changes_finalize, sizeof(mturso_sync_changes_t));
   memset(handle, 0, sizeof(mturso_sync_changes_t));
+  return handle;
+}
+
+static mturso_sync_stats_t *sync_stats_alloc(void) {
+  mturso_sync_stats_t *handle = (mturso_sync_stats_t *)moonbit_make_external_object(
+      sync_stats_finalize, sizeof(mturso_sync_stats_t));
+  memset(handle, 0, sizeof(mturso_sync_stats_t));
   return handle;
 }
 
@@ -205,6 +224,16 @@ mturso_sync_op_t *mturso_sync_db_wait_changes(mturso_sync_db_t *db) {
 }
 
 MOONBIT_FFI_EXPORT
+mturso_sync_op_t *mturso_sync_db_checkpoint(mturso_sync_db_t *db) {
+  return sync_db_start_operation(db, turso_sync_database_checkpoint);
+}
+
+MOONBIT_FFI_EXPORT
+mturso_sync_op_t *mturso_sync_db_stats(mturso_sync_db_t *db) {
+  return sync_db_start_operation(db, turso_sync_database_stats);
+}
+
+MOONBIT_FFI_EXPORT
 int32_t mturso_sync_op_resume(mturso_sync_op_t *op) {
   mturso_clear_err();
   const turso_sync_operation_t *raw = sync_op_raw(op);
@@ -300,6 +329,88 @@ void mturso_sync_changes_close(mturso_sync_changes_t *changes) {
   }
   turso_sync_changes_deinit(changes->changes);
   changes->changes = NULL;
+}
+
+MOONBIT_FFI_EXPORT
+mturso_sync_stats_t *mturso_sync_op_extract_stats(mturso_sync_op_t *op) {
+  mturso_clear_err();
+  mturso_sync_stats_t *handle = sync_stats_alloc();
+  const turso_sync_operation_t *raw = sync_op_raw(op);
+  if (raw == NULL) {
+    mturso_set_err_kind("sync operation is not open",
+                        MTURSO_ERR_SYNC_INTERNAL);
+    return handle;
+  }
+  turso_status_code_t status =
+      turso_sync_operation_result_extract_stats(raw, &handle->stats);
+  if (status != TURSO_OK) {
+    sync_set_result_error(status, "extract sync stats");
+    return handle;
+  }
+  if (handle->stats.revision.ptr != NULL && handle->stats.revision.len != 0) {
+    size_t len = (size_t)handle->stats.revision.len;
+    handle->revision = (char *)malloc(len + 1);
+    if (handle->revision == NULL) {
+      mturso_set_err_kind("failed to allocate sync revision",
+                          MTURSO_ERR_SYNC_INTERNAL);
+      return handle;
+    }
+    memcpy(handle->revision, handle->stats.revision.ptr, len);
+    handle->revision[len] = '\0';
+  }
+  return handle;
+}
+
+MOONBIT_FFI_EXPORT
+int64_t mturso_sync_stats_cdc_operations(mturso_sync_stats_t *stats) {
+  return stats != NULL ? stats->stats.cdc_operations : 0;
+}
+
+MOONBIT_FFI_EXPORT
+int64_t mturso_sync_stats_main_wal_size(mturso_sync_stats_t *stats) {
+  return stats != NULL ? stats->stats.main_wal_size : 0;
+}
+
+MOONBIT_FFI_EXPORT
+int64_t mturso_sync_stats_revert_wal_size(mturso_sync_stats_t *stats) {
+  return stats != NULL ? stats->stats.revert_wal_size : 0;
+}
+
+MOONBIT_FFI_EXPORT
+int64_t mturso_sync_stats_last_pull_unix_time(mturso_sync_stats_t *stats) {
+  return stats != NULL ? stats->stats.last_pull_unix_time : 0;
+}
+
+MOONBIT_FFI_EXPORT
+int64_t mturso_sync_stats_last_push_unix_time(mturso_sync_stats_t *stats) {
+  return stats != NULL ? stats->stats.last_push_unix_time : 0;
+}
+
+MOONBIT_FFI_EXPORT
+int64_t mturso_sync_stats_network_sent_bytes(mturso_sync_stats_t *stats) {
+  return stats != NULL ? stats->stats.network_sent_bytes : 0;
+}
+
+MOONBIT_FFI_EXPORT
+int64_t mturso_sync_stats_network_received_bytes(mturso_sync_stats_t *stats) {
+  return stats != NULL ? stats->stats.network_received_bytes : 0;
+}
+
+MOONBIT_FFI_EXPORT
+moonbit_bytes_t mturso_sync_stats_revision(mturso_sync_stats_t *stats) {
+  if (stats == NULL || stats->revision == NULL) {
+    return mturso_bytes_dup(NULL, 0);
+  }
+  return mturso_bytes_dup(stats->revision, (int32_t)strlen(stats->revision));
+}
+
+MOONBIT_FFI_EXPORT
+void mturso_sync_stats_close(mturso_sync_stats_t *stats) {
+  if (stats == NULL) {
+    return;
+  }
+  free(stats->revision);
+  stats->revision = NULL;
 }
 
 MOONBIT_FFI_EXPORT

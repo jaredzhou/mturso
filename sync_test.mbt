@@ -380,3 +380,114 @@ async test "sync pull applies remote changes and replays local changes" {
   })
   assert_true(operation_failures.val == 0)
 }
+
+///|
+async test "sync database reports stats and checkpoints the WAL" {
+  match @env.get_env_var("TURSODB") {
+    Some(path) if path != "" => ()
+    _ => return
+  }
+  let dir = @fs.tmpdir(prefix="mturso-sync-stats")
+  defer @fs.rmdir(dir, recursive=true)
+  let server = @server.SyncServer::start(
+    @server.SyncServerConfig::new(dir + "/remote.db"),
+  )
+  defer @async.protect_from_cancel(async fn() { server.stop() })
+
+  let source = @mturso.SyncDatabase::open(
+    @mturso.SyncConfig::new(dir + "/source.db", remote_url=server.base_url()),
+  )
+  defer source.close()
+  let conn = source.connect()
+  defer conn.close()
+  ignore(conn.execute("create table notes(id integer primary key, body text)"))
+  ignore(conn.execute("insert into notes(id, body) values (1, 'before')"))
+  source.push()
+  let before = source.stats()
+  assert_true(before.revision.length() > 0)
+  assert_true(before.main_wal_size >= 0L)
+  assert_true(before.network_sent_bytes > 0L)
+  assert_true(before.network_received_bytes > 0L)
+  assert_true(before.last_pull_unix_time > 0L)
+  assert_true(before.last_push_unix_time > 0L)
+  source.checkpoint()
+  let after = source.stats()
+  assert_true(after.main_wal_size < before.main_wal_size)
+
+  ignore(conn.execute("insert into notes(id, body) values (2, 'after')"))
+  source.push()
+  let replica = @mturso.SyncDatabase::open(
+    @mturso.SyncConfig::new(dir + "/replica.db", remote_url=server.base_url()),
+  )
+  defer replica.close()
+  let replica_conn = replica.connect()
+  defer replica_conn.close()
+  let bodies : Array[String] = replica_conn.fetch(
+    "select body from notes order by id",
+  )
+  assert_true(bodies.length() == 2)
+  assert_true(bodies[1] == "after")
+}
+
+///|
+async test "sync database close rejects new work while draining operations" {
+  match @env.get_env_var("TURSODB") {
+    Some(path) if path != "" => ()
+    _ => return
+  }
+  let dir = @fs.tmpdir(prefix="mturso-sync-close")
+  defer @fs.rmdir(dir, recursive=true)
+  let server = @server.SyncServer::start(
+    @server.SyncServerConfig::new(dir + "/remote.db"),
+  )
+  defer @async.protect_from_cancel(async fn() { server.stop() })
+  let source = @mturso.SyncDatabase::open(
+    @mturso.SyncConfig::new(
+      dir + "/source.db",
+      remote_url=server.base_url(),
+      long_poll_timeout_ms=300,
+    ),
+  )
+  let conn = source.connect()
+  let pulled : Ref[Bool?] = Ref(None)
+  @async.with_task_group(group => {
+    group.spawn_bg(() => pulled.val = Some(source.pull()))
+    @async.sleep(50)
+    source.close()
+    assert_true(source.is_closed())
+    let mut push_rejected = false
+    try source.push() catch {
+      @mturso.TursoError::ConnectionError(_) => push_rejected = true
+      _ => ()
+    } noraise {
+      _ => ()
+    }
+    assert_true(push_rejected)
+    let mut stats_rejected = false
+    try ignore(source.stats()) catch {
+      @mturso.TursoError::ConnectionError(_) => stats_rejected = true
+      _ => ()
+    } noraise {
+      _ => ()
+    }
+    assert_true(stats_rejected)
+    let mut checkpoint_rejected = false
+    try source.checkpoint() catch {
+      @mturso.TursoError::ConnectionError(_) => checkpoint_rejected = true
+      _ => ()
+    } noraise {
+      _ => ()
+    }
+    assert_true(checkpoint_rejected)
+    let mut connection_rejected = false
+    try ignore(conn.execute("select 1")) catch {
+      @mturso.TursoError::ConnectionError(_) => connection_rejected = true
+      _ => ()
+    } noraise {
+      _ => ()
+    }
+    assert_true(connection_rejected)
+  })
+  assert_true(pulled.val == Some(false))
+  conn.close()
+}
