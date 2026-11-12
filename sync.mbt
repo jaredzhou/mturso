@@ -542,6 +542,42 @@ pub async fn SyncDatabase::push(self : SyncDatabase) -> Unit raise TursoError {
 }
 
 ///|
+/// Fetch remote changes and atomically replay any unpushed local changes.
+pub async fn SyncDatabase::pull(self : SyncDatabase) -> Bool raise TursoError {
+  if self.closed.val {
+    raise TursoError::ConnectionError("sync database is closed")
+  }
+  self.operation_lock.acquire()
+  defer self.operation_lock.release()
+  let io : SyncIoContext = {
+    raw_db: self.raw,
+    base_url: trim_trailing_slashes(self.config.remote_url),
+    auth_token: self.config.auth_token,
+  }
+  let wait_op = @ffi.sync_db_wait_changes(self.raw)
+  defer @ffi.sync_op_close(wait_op)
+  check_sync_error()
+  drive_sync_operation(io, wait_op)
+  if @ffi.sync_op_result_kind(wait_op) != 2 {
+    raise TursoError::SyncError(
+      SyncErrorKind::Protocol,
+      "sync wait_changes returned an unexpected result",
+    )
+  }
+  let changes = @ffi.sync_op_extract_changes(wait_op)
+  defer @ffi.sync_changes_close(changes)
+  check_sync_error()
+  if @ffi.sync_changes_is_null(changes) {
+    return false
+  }
+  let apply_op = @ffi.sync_db_apply_changes(self.raw, changes)
+  defer @ffi.sync_op_close(apply_op)
+  check_sync_error()
+  drive_sync_operation(io, apply_op)
+  true
+}
+
+///|
 /// Close the sync database and every pooled connection it owns.
 pub fn SyncDatabase::close(self : SyncDatabase) -> Unit {
   if self.closed.val {

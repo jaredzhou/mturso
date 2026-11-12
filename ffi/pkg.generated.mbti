@@ -50,6 +50,12 @@ pub fn stmt_tail(Stmt) -> Int64
 
 pub fn submit_stmt_rows(Conn, Stmt) -> @types.Fd
 
+pub fn sync_changes_close(SyncChanges) -> Unit
+
+pub fn sync_changes_is_null(SyncChanges) -> Bool
+
+pub fn sync_db_apply_changes(SyncDb, SyncChanges) -> SyncOp
+
 pub fn sync_db_close(SyncDb) -> Unit
 
 pub fn sync_db_connect(SyncDb) -> SyncOp
@@ -63,6 +69,8 @@ pub fn sync_db_push(SyncDb) -> SyncOp
 pub fn sync_db_step_callbacks(SyncDb) -> Int
 
 pub fn sync_db_take_io(SyncDb) -> SyncIo
+
+pub fn sync_db_wait_changes(SyncDb) -> SyncOp
 
 pub fn sync_io_close(SyncIo) -> Unit
 
@@ -100,6 +108,8 @@ pub fn sync_io_status(SyncIo, Int) -> Int
 
 pub fn sync_op_close(SyncOp) -> Unit
 
+pub fn sync_op_extract_changes(SyncOp) -> SyncChanges
+
 pub fn sync_op_extract_connection(SyncOp, SyncDb) -> Conn
 
 pub fn sync_op_result_kind(SyncOp) -> Int
@@ -114,6 +124,8 @@ pub type Conn
 pub type Db
 
 pub type Stmt
+
+pub type SyncChanges
 
 pub type SyncDb
 

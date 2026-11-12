@@ -264,3 +264,119 @@ async test "sync push failure keeps local changes for retry" {
   assert_true(bodies[0] == "before")
   assert_true(bodies[1] == "offline")
 }
+
+///|
+async test "sync pull applies remote changes and replays local changes" {
+  match @env.get_env_var("TURSODB") {
+    Some(path) if path != "" => ()
+    _ => return
+  }
+  let dir = @fs.tmpdir(prefix="mturso-sync-pull")
+  defer @fs.rmdir(dir, recursive=true)
+  let server = @server.SyncServer::start(
+    @server.SyncServerConfig::new(dir + "/remote.db"),
+  )
+  defer @async.protect_from_cancel(async fn() { server.stop() })
+  let address = server.base_url()[7:].to_owned()
+
+  let writer = @mturso.SyncDatabase::open(
+    @mturso.SyncConfig::new(
+      dir + "/writer.db",
+      remote_url=server.base_url(),
+      long_poll_timeout_ms=50,
+    ),
+  )
+  defer writer.close()
+  let writer_conn = writer.connect()
+  defer writer_conn.close()
+  ignore(
+    writer_conn.execute("create table notes(id integer primary key, body text)"),
+  )
+  ignore(writer_conn.execute("insert into notes(id, body) values (1, 'seed')"))
+  writer.push()
+
+  let source = @mturso.SyncDatabase::open(
+    @mturso.SyncConfig::new(
+      dir + "/source.db",
+      remote_url=server.base_url(),
+      long_poll_timeout_ms=50,
+    ),
+  )
+  defer source.close()
+  let source_conn = source.connect()
+  defer source_conn.close()
+  ignore(
+    source_conn.execute(
+      "insert into notes(id, body) values (10, 'local-unpushed')",
+    ),
+  )
+
+  ignore(
+    writer_conn.execute(
+      "insert into notes(id, body) values (20, 'remote-change')",
+    ),
+  )
+  writer.push()
+  assert_true(source.pull())
+  let bodies : Array[String] = source_conn.fetch(
+    "select body from notes order by id",
+  )
+  assert_true(bodies.length() == 3)
+  assert_true(bodies[0] == "seed")
+  assert_true(bodies[1] == "local-unpushed")
+  assert_true(bodies[2] == "remote-change")
+  assert_true(!source.pull())
+
+  ignore(
+    writer_conn.execute(
+      "insert into notes(id, body) values (30, 'after-restart')",
+    ),
+  )
+  writer.push()
+  server.stop()
+  let mut network_error = false
+  try source.pull() catch {
+    @mturso.TursoError::SyncError(@mturso.SyncErrorKind::Network, message) => {
+      assert_true(message.length() > 0)
+      network_error = true
+    }
+    _ => ()
+  } noraise {
+    _ => ()
+  }
+  assert_true(network_error)
+  let before_restart : Array[String] = source_conn.fetch(
+    "select body from notes order by id",
+  )
+  assert_true(before_restart.length() == 3)
+
+  let restarted = @server.SyncServer::start(
+    @server.SyncServerConfig::new(dir + "/remote.db", address~),
+  )
+  defer @async.protect_from_cancel(async fn() { restarted.stop() })
+  assert_true(source.pull())
+  let after_restart : Array[String] = source_conn.fetch(
+    "select body from notes order by id",
+  )
+  assert_true(after_restart.length() == 4)
+  assert_true(after_restart[3] == "after-restart")
+
+  let operation_failures : Ref[Int] = Ref(0)
+  @async.with_task_group(group => {
+    group.spawn_bg(() => {
+      try ignore(source.pull()) catch {
+        _ => operation_failures.val = operation_failures.val + 1
+      } noraise {
+        _ => ()
+      }
+    })
+    group.spawn_bg(() => {
+      try source.push() catch {
+        _ => operation_failures.val = operation_failures.val + 1
+      } noraise {
+        _ => ()
+      }
+    })
+  })
+  assert_true(operation_failures.val == 0)
+}

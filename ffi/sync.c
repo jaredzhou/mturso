@@ -15,6 +15,10 @@ struct mturso_sync_io {
   const turso_sync_io_item_t *item;
 };
 
+struct mturso_sync_changes {
+  const turso_sync_changes_t *changes;
+};
+
 static int sync_error_kind(turso_status_code_t status) {
   switch (status) {
     case TURSO_BUSY:
@@ -69,6 +73,14 @@ static void sync_io_finalize(void *self) {
   }
 }
 
+static void sync_changes_finalize(void *self) {
+  mturso_sync_changes_t *handle = (mturso_sync_changes_t *)self;
+  if (handle->changes != NULL) {
+    turso_sync_changes_deinit(handle->changes);
+    handle->changes = NULL;
+  }
+}
+
 static mturso_sync_db_t *sync_db_alloc(void) {
   mturso_sync_db_t *handle = (mturso_sync_db_t *)moonbit_make_external_object(
       sync_db_finalize, sizeof(mturso_sync_db_t));
@@ -90,6 +102,14 @@ static mturso_sync_io_t *sync_io_alloc(void) {
   return handle;
 }
 
+static mturso_sync_changes_t *sync_changes_alloc(void) {
+  mturso_sync_changes_t *handle =
+      (mturso_sync_changes_t *)moonbit_make_external_object(
+          sync_changes_finalize, sizeof(mturso_sync_changes_t));
+  memset(handle, 0, sizeof(mturso_sync_changes_t));
+  return handle;
+}
+
 static const turso_sync_database_t *sync_db_raw(mturso_sync_db_t *db) {
   return db != NULL ? db->db : NULL;
 }
@@ -100,6 +120,11 @@ static const turso_sync_operation_t *sync_op_raw(mturso_sync_op_t *op) {
 
 static const turso_sync_io_item_t *sync_io_raw(mturso_sync_io_t *item) {
   return item != NULL ? item->item : NULL;
+}
+
+static const turso_sync_changes_t *sync_changes_raw(
+    mturso_sync_changes_t *changes) {
+  return changes != NULL ? changes->changes : NULL;
 }
 
 MOONBIT_FFI_EXPORT
@@ -175,6 +200,11 @@ mturso_sync_op_t *mturso_sync_db_push(mturso_sync_db_t *db) {
 }
 
 MOONBIT_FFI_EXPORT
+mturso_sync_op_t *mturso_sync_db_wait_changes(mturso_sync_db_t *db) {
+  return sync_db_start_operation(db, turso_sync_database_wait_changes);
+}
+
+MOONBIT_FFI_EXPORT
 int32_t mturso_sync_op_resume(mturso_sync_op_t *op) {
   mturso_clear_err();
   const turso_sync_operation_t *raw = sync_op_raw(op);
@@ -216,6 +246,60 @@ mturso_conn_t *mturso_sync_op_extract_connection(mturso_sync_op_t *op,
     return mturso_conn_adopt(NULL, raw_db);
   }
   return mturso_conn_adopt((turso_connection_t *)raw_conn, raw_db);
+}
+
+MOONBIT_FFI_EXPORT
+mturso_sync_changes_t *mturso_sync_op_extract_changes(mturso_sync_op_t *op) {
+  mturso_clear_err();
+  mturso_sync_changes_t *handle = sync_changes_alloc();
+  const turso_sync_operation_t *raw = sync_op_raw(op);
+  if (raw == NULL) {
+    mturso_set_err_kind("sync operation is not open",
+                        MTURSO_ERR_SYNC_INTERNAL);
+    return handle;
+  }
+  turso_status_code_t status =
+      turso_sync_operation_result_extract_changes(raw, &handle->changes);
+  if (status != TURSO_OK) {
+    sync_set_result_error(status, "extract sync changes");
+  }
+  return handle;
+}
+
+MOONBIT_FFI_EXPORT
+mturso_sync_op_t *mturso_sync_db_apply_changes(
+    mturso_sync_db_t *db, mturso_sync_changes_t *changes) {
+  mturso_clear_err();
+  mturso_sync_op_t *handle = sync_op_alloc();
+  const turso_sync_database_t *raw_db = sync_db_raw(db);
+  const turso_sync_changes_t *raw_changes = sync_changes_raw(changes);
+  if (raw_db == NULL || raw_changes == NULL) {
+    mturso_set_err_kind("sync database or changes handle is not open",
+                        MTURSO_ERR_SYNC_INTERNAL);
+    return handle;
+  }
+  const char *error = NULL;
+  turso_status_code_t status = turso_sync_database_apply_changes(
+      raw_db, raw_changes, &handle->op, &error);
+  changes->changes = NULL;
+  if (status != TURSO_OK) {
+    sync_set_call_error(status, error);
+  }
+  return handle;
+}
+
+MOONBIT_FFI_EXPORT
+int32_t mturso_sync_changes_is_null(mturso_sync_changes_t *changes) {
+  return sync_changes_raw(changes) == NULL;
+}
+
+MOONBIT_FFI_EXPORT
+void mturso_sync_changes_close(mturso_sync_changes_t *changes) {
+  if (changes == NULL || changes->changes == NULL) {
+    return;
+  }
+  turso_sync_changes_deinit(changes->changes);
+  changes->changes = NULL;
 }
 
 MOONBIT_FFI_EXPORT

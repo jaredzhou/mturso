@@ -27,6 +27,10 @@ pub type SyncOp
 pub type SyncIo
 
 ///|
+/// Opaque fetched sync changes handle.
+pub type SyncChanges
+
+///|
 /// 打开数据库。`path` 为 `:memory:` 或文件路径。
 #borrow(path)
 pub extern "c" fn db_open(path : Bytes) -> Db = "mturso_db_open"
@@ -64,6 +68,10 @@ pub extern "c" fn sync_db_connect(db : SyncDb) -> SyncOp = "mturso_sync_db_conne
 pub extern "c" fn sync_db_push(db : SyncDb) -> SyncOp = "mturso_sync_db_push"
 
 ///|
+#borrow(db)
+pub extern "c" fn sync_db_wait_changes(db : SyncDb) -> SyncOp = "mturso_sync_db_wait_changes"
+
+///|
 #borrow(op)
 pub extern "c" fn sync_op_resume(op : SyncOp) -> Int = "mturso_sync_op_resume"
 
@@ -74,6 +82,25 @@ pub extern "c" fn sync_op_result_kind(op : SyncOp) -> Int = "mturso_sync_op_resu
 ///|
 #borrow(op, db)
 pub extern "c" fn sync_op_extract_connection(op : SyncOp, db : SyncDb) -> Conn = "mturso_sync_op_extract_connection"
+
+///|
+#borrow(op)
+pub extern "c" fn sync_op_extract_changes(op : SyncOp) -> SyncChanges = "mturso_sync_op_extract_changes"
+
+///|
+#borrow(db, changes)
+pub extern "c" fn sync_db_apply_changes(
+  db : SyncDb,
+  changes : SyncChanges,
+) -> SyncOp = "mturso_sync_db_apply_changes"
+
+///|
+#borrow(changes)
+pub extern "c" fn sync_changes_is_null(changes : SyncChanges) -> Bool = "mturso_sync_changes_is_null"
+
+///|
+#borrow(changes)
+pub extern "c" fn sync_changes_close(changes : SyncChanges) = "mturso_sync_changes_close"
 
 ///|
 #borrow(db)

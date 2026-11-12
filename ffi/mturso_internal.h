@@ -237,6 +237,7 @@ typedef struct mturso_conn mturso_conn_t;
 typedef struct mturso_sync_db mturso_sync_db_t;
 typedef struct mturso_sync_op mturso_sync_op_t;
 typedef struct mturso_sync_io mturso_sync_io_t;
+typedef struct mturso_sync_changes mturso_sync_changes_t;
 
 turso_connection_t *mturso_conn_raw(mturso_conn_t *conn);
 mturso_conn_t *mturso_conn_adopt(turso_connection_t *conn,
