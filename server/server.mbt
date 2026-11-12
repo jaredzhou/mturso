@@ -225,12 +225,17 @@ pub async fn SyncServer::start(
     External => [config.database_path, "--sync-server", address]
     Native => [config.database_path, address]
   }
+  let diagnostic_path = config.database_path + ".native-server.log"
+  let stderr = match config.backend {
+    External => @process.Discard
+    Native => @process.ToFile(diagnostic_path)
+  }
   let process = try
     @process.spawn_orphan(
       executable,
       process_args,
       stdout=Discard,
-      stderr=Discard,
+      stderr~,
       no_console_window=true,
     )
   catch {
@@ -265,10 +270,15 @@ pub async fn SyncServer::start(
   match startup {
     Listening => ()
     Exited(code) => {
+      let diagnostics = @fs.read_text(diagnostic_path) catch {
+        _ => ""
+      } noraise {
+        value => value
+      }
       process.close()
       raise sync_server_error(
         @mturso.SyncErrorKind::Internal,
-        "tursodb exited with code \{code} before listening on \{address}",
+        "server exited with code \{code} before listening on \{address}: \{diagnostics}",
       )
     }
     Timeout => {
