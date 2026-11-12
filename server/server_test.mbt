@@ -1,6 +1,9 @@
 // Public API lifecycle tests for the sync server package.
 
 ///|
+let server_process_test_lock : @async.Semaphore = @async.Semaphore::Semaphore(1)
+
+///|
 async test "sync server rejects non-loopback addresses" {
   let config = @server.SyncServerConfig::new(":memory:", address="0.0.0.0:8080")
   let mut rejected = false
@@ -38,6 +41,8 @@ async test "sync server uses only a matching tursodb version" {
 
 ///|
 async test "sync server starts, listens, and stops idempotently" {
+  server_process_test_lock.acquire()
+  defer server_process_test_lock.release()
   let path = match @env.get_env_var("TURSODB") {
     Some(path) if path != "" => path
     _ => return
@@ -60,6 +65,8 @@ async test "sync server starts, listens, and stops idempotently" {
 
 ///|
 async test "sync server reports child early exit" {
+  server_process_test_lock.acquire()
+  defer server_process_test_lock.release()
   let path = match @env.get_env_var("TURSODB") {
     Some(path) if path != "" => path
     _ => return
@@ -86,6 +93,8 @@ async test "sync server reports child early exit" {
 
 ///|
 async test "sync server reports a bind conflict" {
+  server_process_test_lock.acquire()
+  defer server_process_test_lock.release()
   let path = match @env.get_env_var("TURSODB") {
     Some(path) if path != "" => path
     _ => return
@@ -135,6 +144,8 @@ async fn post_pipeline(base_url : String, body : String) -> (Int, String) {
 
 ///|
 async test "native pipeline executes SQL and parameters" {
+  server_process_test_lock.acquire()
+  defer server_process_test_lock.release()
   let executable = match @env.get_env_var("MTURSO_NATIVE_SERVER") {
     Some(path) if path != "" => path
     _ => return
@@ -223,6 +234,8 @@ async test "native pipeline executes SQL and parameters" {
 
 ///|
 async test "native sync server bootstraps a file-backed database" {
+  server_process_test_lock.acquire()
+  defer server_process_test_lock.release()
   let executable = match @env.get_env_var("MTURSO_NATIVE_SERVER") {
     Some(path) if path != "" => path
     _ => return
@@ -302,6 +315,8 @@ async test "native pull updates rejects a truncated protobuf request" {
 
 ///|
 async test "native sync server keeps bootstrap state across restart" {
+  server_process_test_lock.acquire()
+  defer server_process_test_lock.release()
   let executable = match @env.get_env_var("MTURSO_NATIVE_SERVER") {
     Some(path) if path != "" => path
     _ => return
