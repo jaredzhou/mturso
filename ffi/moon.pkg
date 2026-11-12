@@ -1,6 +1,10 @@
 // FFI 层：raw extern "c" 声明 + C stub。对外请用根包的高层 API。
 supported_targets = "+native"
 
+import {
+  "moonbitlang/core/async/types",
+}
+
 options(
   "native-stub": [
     "errors.c",
@@ -9,6 +13,7 @@ options(
     "connection.c",
     "statement.c",
   ],
+  "allow-experimental-packages": [ "moonbitlang/core/async/types" ],
   // Turso 动态库由 loader.c 的 load_turso() 在运行期加载，不需要 link flags。
   // $MTURSO_LIB_PATH 优先；否则 <mturso>/libs/ → <exe>/libs/ → ./libs/ → 系统路径。
 )

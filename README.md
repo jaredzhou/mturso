@@ -1,8 +1,8 @@
 # mturso
 
-MoonBit bindings for [Turso](https://turso.tech) — the Rust rewrite of SQLite — built on the official C ABI (`turso.h`), with SQLite-compatible SQL. Linux and macOS today; Windows and WebAssembly are on the way.
+MoonBit bindings for [Turso](https://turso.tech) — the Rust rewrite of SQLite — built on the official C ABI (`turso.h`), with SQLite-compatible SQL. Linux, macOS, and Windows x64 are supported; WebAssembly is on the way.
 
-![platforms](https://img.shields.io/badge/platforms-linux%20%7C%20macOS%20%7C%20windows%20%28planned%29%20%7C%20wasm%20%28planned%29-lightgrey)
+![platforms](https://img.shields.io/badge/platforms-linux%20%7C%20macOS%20%7C%20windows%20x64%20%7C%20wasm%20%28planned%29-blue)
 ![turso](https://img.shields.io/badge/turso-0.8.2-informational)
 ![license](https://img.shields.io/badge/license-Apache--2.0-green)
 
@@ -41,10 +41,10 @@ async fn main {
 | **Linux x86_64** | ✅ tested | `moon test --target native` green; CI runs it on every push and PR |
 | **Linux aarch64** | ✅ tested | CI runs the suite on `ubuntu-24.04-arm` |
 | **macOS arm64** | ✅ tested | CI runs the suite on `macos-latest` |
-| **Windows x64** | 🚧 planned | Turso ships only a DLL (no import library), so the engine must be loaded at run time; the C stub also needs Win32 threads. Tracked in [#11](https://github.com/jaredzhou/mturso/issues/11) |
+| **Windows x64** | ✅ tested | MSVC build; CI runs the suite on `windows-latest`. The DLL is loaded at runtime and the worker uses Win32 threads plus an anonymous-pipe result channel |
 | **WebAssembly / edge** | 🧪 spike | MoonBit `wasm` + Turso wasm runs end to end under a Node worker host; browser/OPFS and a public API remain planned. See [`notes/wasm-spike.md`](notes/wasm-spike.md) and [#10](https://github.com/jaredzhou/mturso/issues/10) |
 
-macOS x86_64 is deliberately absent (MoonBit ships no `darwin-x86_64` toolchain), as is Windows arm64 (the engine's platform-libs package ships a 0-byte placeholder DLL).
+macOS x86_64 is deliberately absent (MoonBit ships no `darwin-x86_64` toolchain). Windows ARM64 is unsupported because Turso v0.8.2 ships a 0-byte placeholder DLL in its `windows_arm64` package.
 
 ## Installation
 
@@ -95,7 +95,7 @@ The platform file names are:
 | --- | --- |
 | Linux x86_64 / aarch64 | `libturso_sync_sdk_kit.so` |
 | macOS arm64 | `libturso_sync_sdk_kit.dylib` |
-| Windows x64 | `turso_sync_sdk_kit.dll` (vendored; Win32 stub pending #11) |
+| Windows x64 | `turso_sync_sdk_kit.dll` |
 
 `MTURSO_LIB_PATH` is an explicit file override. When it is unset, the lookup
 order is:
@@ -113,7 +113,7 @@ bash scripts/fetch-turso-lib.sh
 ```
 
 The script only copies the platform library and updates its `.sha256`; it never
-changes `moon.pkg`.
+changes `moon.pkg`. On Windows, run it from Git Bash or MSYS2.
 
 For a deployed executable, copy the library next to it:
 
@@ -299,13 +299,12 @@ async fn demo(conn : @mturso.Connection) -> Unit raise @mturso.TursoError {
 
 - **Multi-statement `execute` (DML)** — `query` rejects multi-statement SQL; `execute` runs multiple DML statements in order. A script that mixes DDL and a later write in one call can trip an engine bug (a `btree` panic), so run DDL as its own `execute`.
 - **No cancellation or timeouts** — once submitted, a statement runs to completion (Turso's C ABI has no cross-thread cancel).
-- **Native target today** — the binding loads a C shared library at runtime; Windows and wasm are planned.
+- **Platform boundaries** — native Linux, macOS arm64, and Windows x64 are supported. Windows ARM64 and WebAssembly browser integration are not.
 - **Preview engine** — Turso 0.8.2 is a preview release with many features behind experimental flags; don't treat it as production SQLite.
 
 ## Roadmap
 
 - **#10** — WebAssembly / edge spike: minimal Node-host prototype complete; browser-backed API remains planned. See [`notes/wasm-spike.md`](notes/wasm-spike.md).
-- **#11** — Windows x64 (MSVC).
 
 ## Development
 

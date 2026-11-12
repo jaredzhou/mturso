@@ -1,6 +1,10 @@
 // Generated using `moon info`, DON'T EDIT IT
 package "jaredzhou/mturso/ffi"
 
+import {
+  "moonbitlang/core/async/types",
+}
+
 // Values
 pub fn conn_close(Conn) -> Unit
 
@@ -42,7 +46,7 @@ pub fn stmt_deinit(Stmt) -> Unit
 
 pub fn stmt_tail(Stmt) -> Int64
 
-pub fn submit_stmt_rows(Conn, Stmt) -> Int
+pub fn submit_stmt_rows(Conn, Stmt) -> @types.Fd
 
 // Errors
 

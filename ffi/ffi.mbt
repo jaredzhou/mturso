@@ -88,9 +88,9 @@ pub extern "c" fn stmt_bind_blob(stmt : Stmt, pos : Int, value : Bytes) = "mturs
 pub extern "c" fn conn_exec_stmt(conn : Conn, stmt : Stmt) -> Int64 = "mturso_conn_exec_stmt"
 
 ///|
-/// 流式跑一条已经 prepare + bind 好的语句；返回读端 fd（-1 = 失败）。
+/// 流式跑一条已经 prepare + bind 好的语句；返回读端 fd/HANDLE，失败通过 last_error 报告。
 #borrow(conn, stmt)
-pub extern "c" fn submit_stmt_rows(conn : Conn, stmt : Stmt) -> Int = "mturso_submit_stmt_rows"
+pub extern "c" fn submit_stmt_rows(conn : Conn, stmt : Stmt) -> @types.Fd = "mturso_submit_stmt_rows"
 
 ///|
 /// 等本连接当前 job 结束（`close()` 释放语句前调用）。
@@ -100,8 +100,7 @@ pub extern "c" fn conn_wait_job(conn : Conn) = "mturso_conn_wait_job"
 ///|
 /// 最近一次 INSERT 的 rowid。
 #borrow(conn)
-pub extern "c" fn conn_last_insert_rowid(conn : Conn) -> Int64 =
-  "mturso_conn_last_insert_rowid"
+pub extern "c" fn conn_last_insert_rowid(conn : Conn) -> Int64 = "mturso_conn_last_insert_rowid"
 
 ///|
 /// 显式关闭连接（幂等）。
@@ -116,4 +115,3 @@ pub extern "c" fn last_error() -> Bytes = "mturso_last_error"
 /// 最近一次错误的**分类**（0 = 无错误；1 = Query，2 = Busy，3 = Conflict，
 /// 4 = Connection）。消息仍是文本，分类给上层做模式匹配。
 pub extern "c" fn last_error_kind() -> Int = "mturso_last_error_kind"
-

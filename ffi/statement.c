@@ -1,5 +1,4 @@
 #include <string.h>
-#include <unistd.h>
 
 #include "mturso_internal.h"
 
@@ -172,22 +171,22 @@ int64_t mturso_conn_exec_stmt(mturso_conn_t *conn, mturso_stmt_t *stmt) {
 }
 
 MOONBIT_FFI_EXPORT
-int32_t mturso_submit_stmt_rows(mturso_conn_t *conn, mturso_stmt_t *stmt) {
+mturso_fd_t mturso_submit_stmt_rows(mturso_conn_t *conn, mturso_stmt_t *stmt) {
   mturso_clear_err();
   if (stmt == NULL || stmt->stmt == NULL) {
     mturso_set_err("statement is not open");
-    return -1;
+    return MTURSO_INVALID_FD;
   }
 
-  int fds[2];
-  if (pipe(fds) != 0) {
+  mturso_fd_t fds[2];
+  if (mturso_pipe_create(fds) != 0) {
     mturso_set_err("failed to create result channel");
-    return -1;
+    return MTURSO_INVALID_FD;
   }
   if (mturso_submit_job(conn, stmt->stmt, fds[1]) != 0) {
-    close(fds[0]);
-    close(fds[1]);
-    return -1;
+    mturso_fd_close(fds[0]);
+    mturso_fd_close(fds[1]);
+    return MTURSO_INVALID_FD;
   }
-  return (int32_t)fds[0];
+  return fds[0];
 }

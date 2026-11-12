@@ -1,6 +1,5 @@
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 
 #include "mturso_internal.h"
 
@@ -57,14 +56,14 @@ static void put_bytes(strbuf_t *sb, const char *value, int64_t len) {
 
 enum { FRAME_END = 0, FRAME_HEADER = 1, FRAME_ROW = 2, FRAME_ERR = 3 };
 
-static int write_all(int fd, const char *src, size_t len) {
+static int write_all(mturso_fd_t fd, const char *src, size_t len) {
   while (len > 0) {
-    ssize_t written = write(fd, src, len);
-    if (written <= 0) {
+    size_t written = 0;
+    if (mturso_fd_write(fd, src, len, &written) != 0) {
       return -1;
     }
     src += written;
-    len -= (size_t)written;
+    len -= written;
   }
   return 0;
 }
@@ -75,13 +74,13 @@ static void frame_begin(strbuf_t *sb, uint8_t tag) {
   put_u32(sb, 0);
 }
 
-static int flush_frame(int fd, strbuf_t *sb) {
+static int flush_frame(mturso_fd_t fd, strbuf_t *sb) {
   uint32_t len = (uint32_t)(sb->len - 5);
   memcpy(sb->buf + 1, &len, 4);
   return write_all(fd, sb->buf, sb->len);
 }
 
-void mturso_send_error_frame(int fd, const char *msg, int kind) {
+void mturso_send_error_frame(mturso_fd_t fd, const char *msg, int kind) {
   const char *message = msg != NULL ? msg : "unknown error";
   strbuf_t sb = {0};
   frame_begin(&sb, FRAME_ERR);
@@ -91,7 +90,7 @@ void mturso_send_error_frame(int fd, const char *msg, int kind) {
   free(sb.buf);
 }
 
-void mturso_stream_stmt_rows(turso_statement_t *stmt, int fd) {
+void mturso_stream_stmt_rows(turso_statement_t *stmt, mturso_fd_t fd) {
   const char *error = NULL;
   strbuf_t sb = {0};
   int64_t n_cols = turso_statement_column_count(stmt);

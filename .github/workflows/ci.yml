@@ -1,7 +1,7 @@
-# mturso CI — check / fmt / test on Linux and macOS, x86_64 and arm64, every push and PR.
+# mturso CI — check / fmt / test on Linux, macOS, and Windows every push and PR.
 # 参考 jaredzhou/moonpg 的 ci.yml；差异是本库依赖 Turso 的 C 动态库：
-#   仓库里只随包分发了 linux/x86_64 的 .so；其它平台/架构（macOS 两种、linux arm64）
-#   按 runner 的 uname 现取对应的平台库，再交给 fetch 脚本复制到 libs/。
+#   仓库随包提供 linux/x86_64 的 .so 和 windows/x64 的 .dll；
+#   其它平台/架构（macOS 两种、linux arm64）按 runner 的 uname 现取对应平台库。
 
 name: CI
 
@@ -76,4 +76,36 @@ jobs:
 
       # Build and run all tests.
       - name: Test
+        run: moon test --target native --deny-warn
+
+  windows:
+    name: Windows x64
+    permissions:
+      contents: read
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Install MoonBit
+        shell: pwsh
+        run: |
+          Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
+          irm https://cli.moonbitlang.com/install/powershell.ps1 | iex
+          "$env:USERPROFILE\.moon\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+
+      - name: Update dependencies
+        shell: pwsh
+        run: |
+          moon version --all
+          moon update
+
+      - name: Check
+        shell: pwsh
+        run: moon check --target native --deny-warn
+
+      - name: Test
+        shell: pwsh
         run: moon test --target native --deny-warn

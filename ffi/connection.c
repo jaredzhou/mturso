@@ -1,7 +1,5 @@
-#include <pthread.h>
 #include <stdio.h>
 #include <string.h>
-#include <unistd.h>
 
 #include "mturso_internal.h"
 
@@ -12,13 +10,13 @@ typedef struct {
 struct mturso_conn {
   turso_connection_t *conn;
 
-  pthread_t worker;
+  mturso_thread_t worker;
   int worker_started;
-  pthread_mutex_t mu;
-  pthread_cond_t cv;
+  mturso_mutex_t mu;
+  mturso_cond_t cv;
   int has_job;
   int shutdown;
-  int stream_fd;
+  mturso_fd_t stream_fd;
   turso_statement_t *job_stmt;
   int busy;
 };
@@ -84,7 +82,11 @@ static turso_value_t turso_sleep_scalar(
     ms = argv[0].value.int_value;
   }
   if (ms > 0) {
+#if defined(_WIN32)
+    Sleep((DWORD)ms);
+#else
     usleep((useconds_t)(ms * 1000));
+#endif
   }
   turso_value_t out = {0};
   out.value_type = TURSO_EXTENSION_VALUE_INTEGER;
@@ -145,24 +147,29 @@ void mturso_db_close(mturso_db_t *db) {
   db->db = NULL;
 }
 
-static void *conn_worker(void *arg) {
+#if defined(_WIN32)
+static unsigned __stdcall conn_worker(void *arg)
+#else
+static void *conn_worker(void *arg)
+#endif
+{
   mturso_conn_t *handle = (mturso_conn_t *)arg;
   for (;;) {
-    pthread_mutex_lock(&handle->mu);
+    mturso_mutex_lock(&handle->mu);
     while (!handle->has_job && !handle->shutdown) {
-      pthread_cond_wait(&handle->cv, &handle->mu);
+      mturso_cond_wait(&handle->cv, &handle->mu);
     }
     if (handle->shutdown && !handle->has_job) {
-      pthread_mutex_unlock(&handle->mu);
+      mturso_mutex_unlock(&handle->mu);
       break;
     }
 
     turso_statement_t *stmt = handle->job_stmt;
-    int fd = handle->stream_fd;
+    mturso_fd_t fd = handle->stream_fd;
     handle->job_stmt = NULL;
-    handle->stream_fd = -1;
+    handle->stream_fd = MTURSO_INVALID_FD;
     handle->has_job = 0;
-    pthread_mutex_unlock(&handle->mu);
+    mturso_mutex_unlock(&handle->mu);
 
     if (stmt != NULL) {
       mturso_stream_stmt_rows(stmt, fd);
@@ -170,23 +177,27 @@ static void *conn_worker(void *arg) {
       mturso_send_error_frame(fd, "connection job has no statement",
                               MTURSO_ERR_CONNECTION);
     }
-    close(fd);
+    mturso_fd_close(fd);
 
-    pthread_mutex_lock(&handle->mu);
+    mturso_mutex_lock(&handle->mu);
     handle->busy = 0;
-    pthread_cond_broadcast(&handle->cv);
-    pthread_mutex_unlock(&handle->mu);
+    mturso_cond_broadcast(&handle->cv);
+    mturso_mutex_unlock(&handle->mu);
   }
+#if defined(_WIN32)
+  return 0;
+#else
   return NULL;
+#endif
 }
 
 static void conn_stop_worker(mturso_conn_t *conn) {
   if (conn->worker_started) {
-    pthread_mutex_lock(&conn->mu);
+    mturso_mutex_lock(&conn->mu);
     conn->shutdown = 1;
-    pthread_cond_signal(&conn->cv);
-    pthread_mutex_unlock(&conn->mu);
-    pthread_join(conn->worker, NULL);
+    mturso_cond_signal(&conn->cv);
+    mturso_mutex_unlock(&conn->mu);
+    mturso_thread_join(conn->worker);
     conn->worker_started = 0;
   }
 }
@@ -198,8 +209,8 @@ static void conn_finalize(void *self) {
     turso_connection_deinit(handle->conn);
     handle->conn = NULL;
   }
-  pthread_mutex_destroy(&handle->mu);
-  pthread_cond_destroy(&handle->cv);
+  mturso_mutex_destroy(&handle->mu);
+  mturso_cond_destroy(&handle->cv);
 }
 
 MOONBIT_FFI_EXPORT
@@ -208,9 +219,9 @@ mturso_conn_t *mturso_db_connect(mturso_db_t *db) {
   mturso_conn_t *handle = (mturso_conn_t *)moonbit_make_external_object(
       conn_finalize, sizeof(mturso_conn_t));
   memset(handle, 0, sizeof(mturso_conn_t));
-  handle->stream_fd = -1;
-  pthread_mutex_init(&handle->mu, NULL);
-  pthread_cond_init(&handle->cv, NULL);
+  handle->stream_fd = MTURSO_INVALID_FD;
+  mturso_mutex_init(&handle->mu);
+  mturso_cond_init(&handle->cv);
 
   if (db == NULL || db->db == NULL) {
     mturso_set_err("database is not open");
@@ -223,7 +234,7 @@ mturso_conn_t *mturso_db_connect(mturso_db_t *db) {
   }
   register_test_functions(handle->conn);
 
-  if (pthread_create(&handle->worker, NULL, conn_worker, handle) == 0) {
+  if (mturso_thread_start(&handle->worker, conn_worker, handle) == 0) {
     handle->worker_started = 1;
   } else {
     mturso_set_err("failed to start worker thread");
@@ -275,7 +286,7 @@ int64_t mturso_conn_exec(mturso_conn_t *conn, moonbit_bytes_t sql) {
 }
 
 int mturso_submit_job(mturso_conn_t *conn, turso_statement_t *stmt,
-                      int stream_fd) {
+                      mturso_fd_t stream_fd) {
   if (conn == NULL || conn->conn == NULL) {
     mturso_set_err("connection is not open");
     return -1;
@@ -285,9 +296,9 @@ int mturso_submit_job(mturso_conn_t *conn, turso_statement_t *stmt,
     return -1;
   }
 
-  pthread_mutex_lock(&conn->mu);
+  mturso_mutex_lock(&conn->mu);
   if (conn->has_job || conn->busy) {
-    pthread_mutex_unlock(&conn->mu);
+    mturso_mutex_unlock(&conn->mu);
     mturso_set_err("a job is already in flight on this connection");
     return -1;
   }
@@ -295,8 +306,8 @@ int mturso_submit_job(mturso_conn_t *conn, turso_statement_t *stmt,
   conn->job_stmt = stmt;
   conn->busy = 1;
   conn->has_job = 1;
-  pthread_cond_signal(&conn->cv);
-  pthread_mutex_unlock(&conn->mu);
+  mturso_cond_signal(&conn->cv);
+  mturso_mutex_unlock(&conn->mu);
   return 0;
 }
 
@@ -305,9 +316,9 @@ void mturso_conn_wait_job(mturso_conn_t *conn) {
   if (conn == NULL) {
     return;
   }
-  pthread_mutex_lock(&conn->mu);
+  mturso_mutex_lock(&conn->mu);
   while (conn->busy) {
-    pthread_cond_wait(&conn->cv, &conn->mu);
+    mturso_cond_wait(&conn->cv, &conn->mu);
   }
-  pthread_mutex_unlock(&conn->mu);
+  mturso_mutex_unlock(&conn->mu);
 }

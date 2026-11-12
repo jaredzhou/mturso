@@ -31,7 +31,8 @@ case "$(uname -s)/$(uname -m)" in
     SUB=windows_amd64
     LIB=turso_sync_sdk_kit.dll
     ;;
-  MINGW*/aarch64 | MSYS*/aarch64 | CYGWIN*/aarch64)
+  MINGW*/aarch64 | MINGW*/arm64 | MSYS*/aarch64 | MSYS*/arm64 | \
+    CYGWIN*/aarch64 | CYGWIN*/arm64)
     echo "Windows ARM64 暂不支持：v0.8.2 平台包中的 DLL 是 0 字节占位。" >&2
     exit 1
     ;;

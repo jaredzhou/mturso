@@ -6,6 +6,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "platform.h"
 #include "turso.h"
 
 enum {
@@ -117,8 +118,9 @@ typedef struct mturso_conn mturso_conn_t;
 
 turso_connection_t *mturso_conn_raw(mturso_conn_t *conn);
 int mturso_step_to_done(turso_statement_t *stmt, const char **err, int *out_kind);
-void mturso_stream_stmt_rows(turso_statement_t *stmt, int fd);
-void mturso_send_error_frame(int fd, const char *msg, int kind);
-int mturso_submit_job(mturso_conn_t *conn, turso_statement_t *stmt, int stream_fd);
+void mturso_stream_stmt_rows(turso_statement_t *stmt, mturso_fd_t fd);
+void mturso_send_error_frame(mturso_fd_t fd, const char *msg, int kind);
+int mturso_submit_job(mturso_conn_t *conn, turso_statement_t *stmt,
+                      mturso_fd_t stream_fd);
 
 #endif

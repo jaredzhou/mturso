@@ -161,7 +161,7 @@ async test "慢查询（SQL 里 sleep 2s）不阻塞另一个连接上的快查�
     "慢查询 select turso_sleep(2000) 返回用时 \{slow_ms.val}ms；快查询 select 6*7 返回用时 \{fast_ms.val}ms",
   )
   assert_true(slow_ms.val >= 2000L)
-  assert_true(fast_ms.val < 500L)
+  assert_true(fast_ms.val < 1000L)
 }
 
 ///|

@@ -1,9 +1,12 @@
-#include <dlfcn.h>
-#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#if !defined(_WIN32)
+#include <dlfcn.h>
+#include <signal.h>
 #include <unistd.h>
+#endif
 
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
@@ -26,26 +29,77 @@ static void *g_lib = NULL;
 static int g_setup_state = 0;
 static char g_load_reason[1024];
 
-static int try_load(const char *path) {
+static void set_library_error(const char *action) {
+#if defined(_WIN32)
+  DWORD code = GetLastError();
+  char *message = NULL;
+  DWORD length =
+      FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
+                         FORMAT_MESSAGE_IGNORE_INSERTS,
+                     NULL, code, 0, (LPSTR)&message, 0, NULL);
+  if (length != 0 && message != NULL) {
+    snprintf(g_load_reason, sizeof(g_load_reason), "%s: %s", action, message);
+    LocalFree(message);
+  } else {
+    snprintf(g_load_reason, sizeof(g_load_reason), "%s (Windows error %lu)",
+             action, (unsigned long)code);
+  }
+#else
+  const char *why = dlerror();
+  snprintf(g_load_reason, sizeof(g_load_reason), "%s: %s", action,
+           why != NULL ? why : "unknown dynamic loader error");
+#endif
+}
+
+static void *open_library(const char *path) {
+#if defined(_WIN32)
+  void *handle = (void *)LoadLibraryA(path);
+  if (handle == NULL) {
+    set_library_error("LoadLibraryA failed");
+  }
+  return handle;
+#else
   dlerror();
   void *handle = dlopen(path, RTLD_NOW | RTLD_LOCAL);
   if (handle == NULL) {
-    const char *why = dlerror();
-    snprintf(g_load_reason, sizeof(g_load_reason), "%s",
-             why != NULL ? why : "unknown dlopen error");
+    set_library_error("dlopen failed");
+  }
+  return handle;
+#endif
+}
+
+static void *library_symbol(void *handle, const char *name) {
+#if defined(_WIN32)
+  return (void *)GetProcAddress((HMODULE)handle, name);
+#else
+  dlerror();
+  return dlsym(handle, name);
+#endif
+}
+
+static void close_library(void *handle) {
+#if defined(_WIN32)
+  FreeLibrary((HMODULE)handle);
+#else
+  dlclose(handle);
+#endif
+}
+
+static int try_load(const char *path) {
+  void *handle = open_library(path);
+  if (handle == NULL) {
     return -1;
   }
-#define RESOLVE(field)                                                          \
-  do {                                                                          \
-    dlerror();                                                                  \
-    *(void **)(&mturso_api.field) = dlsym(handle, #field);                      \
-    if (mturso_api.field == NULL) {                                             \
-      const char *why = dlerror();                                              \
-      snprintf(g_load_reason, sizeof(g_load_reason), "missing symbol %s: %s",   \
-               #field, why != NULL ? why : "unknown dlsym error");              \
-      dlclose(handle);                                                          \
-      return -1;                                                                \
-    }                                                                           \
+#define RESOLVE(field)                                                         \
+  do {                                                                         \
+    void *symbol = library_symbol(handle, #field);                             \
+    if (symbol == NULL) {                                                      \
+      snprintf(g_load_reason, sizeof(g_load_reason), "missing symbol %s",      \
+               #field);                                                       \
+      close_library(handle);                                                   \
+      return -1;                                                               \
+    }                                                                          \
+    *(void **)(&mturso_api.field) = symbol;                                    \
   } while (0)
   RESOLVE(turso_setup);
   RESOLVE(turso_database_new);
@@ -80,14 +134,34 @@ static int try_load(const char *path) {
   return 0;
 }
 
+#if defined(_WIN32)
+#define MTURSO_PATH_SEP '\\'
+#define MTURSO_PATH_SEP_STR "\\"
+#else
+#define MTURSO_PATH_SEP '/'
+#define MTURSO_PATH_SEP_STR "/"
+#endif
+
+static char *last_path_separator(char *path) {
+  char *slash = strrchr(path, '/');
+  char *backslash = strrchr(path, '\\');
+  if (slash == NULL) {
+    return backslash;
+  }
+  if (backslash == NULL) {
+    return slash;
+  }
+  return slash > backslash ? slash : backslash;
+}
+
 static const char *source_lib_path(char *buf, size_t len) {
   snprintf(buf, len, "%s", __FILE__);
-  char *slash = strrchr(buf, '/');
+  char *slash = last_path_separator(buf);
   if (slash == NULL) {
     return NULL;
   }
   *slash = '\0';
-  slash = strrchr(buf, '/');
+  slash = last_path_separator(buf);
   if (slash == NULL) {
     snprintf(buf, len, ".");
   } else {
@@ -97,12 +171,19 @@ static const char *source_lib_path(char *buf, size_t len) {
   if (used + sizeof("/libs/" MTURSO_LIB_FILE) > len) {
     return NULL;
   }
-  snprintf(buf + used, len - used, "/libs/%s", MTURSO_LIB_FILE);
+  snprintf(buf + used, len - used, "%clibs%c%s", MTURSO_PATH_SEP,
+           MTURSO_PATH_SEP, MTURSO_LIB_FILE);
   return buf;
 }
 
 static int executable_path(char *buf, size_t len) {
-#if defined(__APPLE__)
+#if defined(_WIN32)
+  DWORD n = GetModuleFileNameA(NULL, buf, (DWORD)len);
+  if (n == 0 || (size_t)n >= len) {
+    return -1;
+  }
+  return 0;
+#elif defined(__APPLE__)
   uint32_t size = (uint32_t)len;
   if (_NSGetExecutablePath(buf, &size) != 0) {
     return -1;
@@ -130,12 +211,13 @@ static const char *exe_lib_path(char *buf, size_t len) {
   if (executable_path(buf, len) != 0) {
     return NULL;
   }
-  char *slash = strrchr(buf, '/');
+  char *slash = last_path_separator(buf);
   if (slash == NULL) {
     return NULL;
   }
   *slash = '\0';
-  snprintf(slash, (size_t)(len - (slash - buf)), "/libs/%s", MTURSO_LIB_FILE);
+  snprintf(slash, (size_t)(len - (slash - buf)), "%clibs%c%s", MTURSO_PATH_SEP,
+           MTURSO_PATH_SEP, MTURSO_LIB_FILE);
   return buf;
 }
 
@@ -168,7 +250,8 @@ static int load_turso(void) {
   if (exe_libs != NULL) {
     candidates[count++] = exe_libs;
   }
-  candidates[count++] = "./libs/" MTURSO_LIB_FILE;
+  candidates[count++] = "." MTURSO_PATH_SEP_STR "libs" MTURSO_PATH_SEP_STR
+                        MTURSO_LIB_FILE;
   candidates[count++] = MTURSO_LIB_FILE;
   for (size_t i = 0; i < count; i++) {
     if (try_load(candidates[i]) == 0) {
@@ -190,7 +273,9 @@ void mturso_ensure_setup(void) {
   if (g_setup_state != 0) {
     return;
   }
+#if !defined(_WIN32)
   signal(SIGPIPE, SIG_IGN);
+#endif
   if (load_turso() != 0) {
     g_setup_state = -1;
     return;

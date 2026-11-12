@@ -252,9 +252,6 @@ async fn Connection::open_rows(
   bind_params(stmt, params)
   let fd = @ffi.submit_stmt_rows(self.raw, stmt)
   check_error()
-  if fd < 0 {
-    raise TursoError::ConnectionError("failed to start streaming query")
-  }
   let stream = @raw_fd.RawFdStream(fd) catch {
     _ => {
       @ffi.conn_wait_job(self.raw)
