@@ -7,7 +7,7 @@
 
 ///|
 /// 值类型从子包转出，使用方只写 `@mturso.Value` / `@mturso.Column`。
-pub using @value { type Value, type Column }
+pub using @value {type Value, type Column}
 
 ///|
 /// Turso 支持的 journal mode。它是库/文件级属性，不是单连接属性。
@@ -44,10 +44,12 @@ priv struct ConnectionLifetime {
   default_tx_mode : () -> TxMode
 }
 
+///|
 pub struct Connection {
   priv raw : @ffi.Conn
   priv mut lifetime : ConnectionLifetime
   priv closed : Ref[Bool]
+  priv sync_io : SyncIoContext?
 }
 
 ///|
@@ -90,7 +92,11 @@ pub fn Database::open(path : String, max_conns? : Int = 4) -> Database raise Tur
     idle_len: Ref(0),
     busy: [],
     sem: @async.Semaphore::Semaphore(n),
-    stats: Ref({ acquire_count: 0L, acquire_wait_count: 0L, acquire_wait_duration_ms: 0L }),
+    stats: Ref({
+      acquire_count: 0L,
+      acquire_wait_count: 0L,
+      acquire_wait_duration_ms: 0L,
+    }),
     journal_mode: Ref(JournalMode::Wal),
     default_tx_mode: Ref(TxMode::Deferred),
     closed: Ref(false),
@@ -173,6 +179,7 @@ pub async fn Database::connect(self : Database) -> Connection raise TursoError {
       default_tx_mode: () => self.default_tx_mode.val,
     },
     closed: Ref(false),
+    sync_io: None,
   }
 }
 
@@ -202,7 +209,9 @@ fn Connection::ensure_open(self : Connection) -> Unit raise TursoError {
 
 ///|
 /// 最近一次 INSERT 生成的 rowid。
-pub fn Connection::last_insert_rowid(self : Connection) -> Int64 raise TursoError {
+pub fn Connection::last_insert_rowid(
+  self : Connection,
+) -> Int64 raise TursoError {
   self.ensure_open()
   let v = @ffi.conn_last_insert_rowid(self.raw)
   check_error()

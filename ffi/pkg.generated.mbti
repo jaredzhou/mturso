@@ -18,6 +18,8 @@ pub fn conn_prepare(Conn, Bytes) -> Stmt
 
 pub fn conn_prepare_first(Conn, Bytes) -> Stmt
 
+pub fn conn_resume_sync_io(Conn) -> Unit
+
 pub fn conn_wait_job(Conn) -> Unit
 
 pub fn db_close(Db) -> Unit
@@ -48,6 +50,60 @@ pub fn stmt_tail(Stmt) -> Int64
 
 pub fn submit_stmt_rows(Conn, Stmt) -> @types.Fd
 
+pub fn sync_db_close(SyncDb) -> Unit
+
+pub fn sync_db_connect(SyncDb) -> SyncOp
+
+pub fn sync_db_create(SyncDb) -> SyncOp
+
+pub fn sync_db_new(Bytes, Bytes, Bytes, Int, Bool) -> SyncDb
+
+pub fn sync_db_step_callbacks(SyncDb) -> Int
+
+pub fn sync_db_take_io(SyncDb) -> SyncIo
+
+pub fn sync_io_close(SyncIo) -> Unit
+
+pub fn sync_io_done(SyncIo) -> Int
+
+pub fn sync_io_full_read_path(SyncIo) -> Bytes
+
+pub fn sync_io_full_write_content(SyncIo) -> Bytes
+
+pub fn sync_io_full_write_path(SyncIo) -> Bytes
+
+pub fn sync_io_http_body(SyncIo) -> Bytes
+
+pub fn sync_io_http_header_count(SyncIo) -> Int
+
+pub fn sync_io_http_header_key(SyncIo, Int) -> Bytes
+
+pub fn sync_io_http_header_value(SyncIo, Int) -> Bytes
+
+pub fn sync_io_http_method(SyncIo) -> Bytes
+
+pub fn sync_io_http_path(SyncIo) -> Bytes
+
+pub fn sync_io_http_url(SyncIo) -> Bytes
+
+pub fn sync_io_is_null(SyncIo) -> Bool
+
+pub fn sync_io_kind(SyncIo) -> Int
+
+pub fn sync_io_poison(SyncIo, Bytes) -> Int
+
+pub fn sync_io_push_buffer(SyncIo, Bytes) -> Int
+
+pub fn sync_io_status(SyncIo, Int) -> Int
+
+pub fn sync_op_close(SyncOp) -> Unit
+
+pub fn sync_op_extract_connection(SyncOp, SyncDb) -> Conn
+
+pub fn sync_op_result_kind(SyncOp) -> Int
+
+pub fn sync_op_resume(SyncOp) -> Int
+
 // Errors
 
 // Types and methods
@@ -56,6 +112,12 @@ pub type Conn
 pub type Db
 
 pub type Stmt
+
+pub type SyncDb
+
+pub type SyncIo
+
+pub type SyncOp
 
 // Type aliases
 

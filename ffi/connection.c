@@ -9,6 +9,7 @@ typedef struct {
 
 struct mturso_conn {
   turso_connection_t *conn;
+  const turso_sync_database_t *sync_db;
 
   mturso_thread_t worker;
   int worker_started;
@@ -19,6 +20,9 @@ struct mturso_conn {
   mturso_fd_t stream_fd;
   turso_statement_t *job_stmt;
   int busy;
+  int sync_mode;
+  int waiting_for_sync_io;
+  int sync_io_resume;
 };
 
 static void set_errbuf(char *buf, size_t len, const char *msg) {
@@ -172,7 +176,7 @@ static void *conn_worker(void *arg)
     mturso_mutex_unlock(&handle->mu);
 
     if (stmt != NULL) {
-      mturso_stream_stmt_rows(stmt, fd);
+      mturso_stream_stmt_rows(handle, stmt, fd);
     } else {
       mturso_send_error_frame(fd, "connection job has no statement",
                               MTURSO_ERR_CONNECTION);
@@ -195,7 +199,8 @@ static void conn_stop_worker(mturso_conn_t *conn) {
   if (conn->worker_started) {
     mturso_mutex_lock(&conn->mu);
     conn->shutdown = 1;
-    mturso_cond_signal(&conn->cv);
+    conn->sync_io_resume = 1;
+    mturso_cond_broadcast(&conn->cv);
     mturso_mutex_unlock(&conn->mu);
     mturso_thread_join(conn->worker);
     conn->worker_started = 0;
@@ -242,6 +247,29 @@ mturso_conn_t *mturso_db_connect(mturso_db_t *db) {
   return handle;
 }
 
+mturso_conn_t *mturso_conn_adopt(turso_connection_t *conn,
+                                 const turso_sync_database_t *sync_db) {
+  mturso_conn_t *handle = (mturso_conn_t *)moonbit_make_external_object(
+      conn_finalize, sizeof(mturso_conn_t));
+  memset(handle, 0, sizeof(mturso_conn_t));
+  handle->stream_fd = MTURSO_INVALID_FD;
+  handle->conn = conn;
+  handle->sync_db = sync_db;
+  handle->sync_mode = sync_db != NULL ? 1 : 0;
+  mturso_mutex_init(&handle->mu);
+  mturso_cond_init(&handle->cv);
+  if (handle->conn == NULL) {
+    return handle;
+  }
+  register_test_functions(handle->conn);
+  if (mturso_thread_start(&handle->worker, conn_worker, handle) == 0) {
+    handle->worker_started = 1;
+  } else {
+    mturso_set_err("failed to start worker thread");
+  }
+  return handle;
+}
+
 MOONBIT_FFI_EXPORT
 void mturso_conn_close(mturso_conn_t *conn) {
   if (conn == NULL) {
@@ -273,6 +301,11 @@ int64_t mturso_conn_exec(mturso_conn_t *conn, moonbit_bytes_t sql) {
   mturso_clear_err();
   if (conn == NULL || conn->conn == NULL) {
     mturso_set_err("connection is not open");
+    return -1;
+  }
+  if (conn->sync_mode) {
+    mturso_set_err_kind("sync connections require the async query API",
+                        MTURSO_ERR_CONNECTION);
     return -1;
   }
   char errbuf[1024] = {0};
@@ -320,5 +353,35 @@ void mturso_conn_wait_job(mturso_conn_t *conn) {
   while (conn->busy) {
     mturso_cond_wait(&conn->cv, &conn->mu);
   }
+  mturso_mutex_unlock(&conn->mu);
+}
+
+int mturso_conn_is_sync(mturso_conn_t *conn) {
+  return conn != NULL && conn->sync_mode;
+}
+
+void mturso_conn_prepare_sync_io(mturso_conn_t *conn) {
+  mturso_mutex_lock(&conn->mu);
+  conn->waiting_for_sync_io = 1;
+  conn->sync_io_resume = 0;
+  mturso_mutex_unlock(&conn->mu);
+}
+
+void mturso_conn_wait_for_sync_io(mturso_conn_t *conn) {
+  mturso_mutex_lock(&conn->mu);
+  while (!conn->sync_io_resume && !conn->shutdown) {
+    mturso_cond_wait(&conn->cv, &conn->mu);
+  }
+  conn->waiting_for_sync_io = 0;
+  mturso_mutex_unlock(&conn->mu);
+}
+
+void mturso_conn_resume_sync_io(mturso_conn_t *conn) {
+  if (conn == NULL) {
+    return;
+  }
+  mturso_mutex_lock(&conn->mu);
+  conn->sync_io_resume = 1;
+  mturso_cond_broadcast(&conn->cv);
   mturso_mutex_unlock(&conn->mu);
 }

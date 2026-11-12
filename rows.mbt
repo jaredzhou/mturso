@@ -18,6 +18,7 @@ pub struct ResultRows {
   columns : Array[@value.Column]
   stmt : @ffi.Stmt
   conn : @ffi.Conn
+  priv sync_io : SyncIoContext?
   release : Connection?
   pending : Ref[Array[@value.Value]?]
   pending_raw : Ref[Array[Bytes]?]
@@ -27,39 +28,55 @@ pub struct ResultRows {
 }
 
 ///|
-pub impl Rows for ResultRows with has_next(self) {
-  if self.closed.val || self.done.val {
-    return false
-  }
-  let (tag, payload) = read_frame(self.stream)
-  match tag {
-    0 => {
-      self.done.val = true
-      if payload.length() >= 8 {
-        let rd : Rd = { b: payload, p: Ref(0) }
-        self.changes.val = rd.i64()
+pub impl Rows for ResultRows with fn has_next(self) {
+  for ;; {
+    if self.closed.val || self.done.val {
+      return false
+    }
+    let (tag, payload) = read_frame(self.stream)
+    match tag {
+      0 => {
+        self.done.val = true
+        if payload.length() >= 8 {
+          let rd : Rd = { b: payload, p: Ref(0), }
+          self.changes.val = rd.i64()
+        }
+        return false
       }
-      false
-    }
-    2 => {
-      let (values, raws) = parse_cells(payload, self.columns.length())
-      self.pending.val = Some(values)
-      self.pending_raw.val = Some(raws)
-      true
-    }
-    3 => {
-      self.done.val = true
-      raise stream_error(payload)
-    }
-    _ => {
-      self.done.val = true
-      raise TursoError::QueryError("unexpected frame tag \{tag}")
+      2 => {
+        let (values, raws) = parse_cells(payload, self.columns.length())
+        self.pending.val = Some(values)
+        self.pending_raw.val = Some(raws)
+        return true
+      }
+      3 => {
+        self.done.val = true
+        raise stream_error(payload)
+      }
+      4 =>
+        match self.sync_io {
+          Some(io) => {
+            io.process_one()
+            @ffi.conn_resume_sync_io(self.conn)
+            continue
+          }
+          None => {
+            self.done.val = true
+            raise TursoError::ConnectionError(
+              "sync I/O requested by a local connection",
+            )
+          }
+        }
+      _ => {
+        self.done.val = true
+        raise TursoError::QueryError("unexpected frame tag \{tag}")
+      }
     }
   }
 }
 
 ///|
-pub impl Rows for ResultRows with get_row(self) {
+pub impl Rows for ResultRows with fn get_row(self) {
   match self.pending.val {
     Some(values) => {
       self.pending.val = None
@@ -68,23 +85,25 @@ pub impl Rows for ResultRows with get_row(self) {
         None => []
       }
       self.pending_raw.val = None
-      { values, columns: self.columns, raw: raws }
+      { values, columns: self.columns, raw: raws, }
     }
-    None => raise TursoError::QueryError("no pending row; call has_next() first")
+    None =>
+      raise TursoError::QueryError("no pending row; call has_next() first")
   }
 }
 
 ///|
-pub impl Rows for ResultRows with columns(self) {
+pub impl Rows for ResultRows with fn columns(self) {
   self.columns
 }
 
 ///|
-pub impl Rows for ResultRows with close(self) {
+pub impl Rows for ResultRows with fn close(self) {
   if !self.closed.val {
     self.closed.val = true
     // 关掉读端：worker 的 write 会拿到 EPIPE，立刻停下（这就是取消）
     self.stream.close()
+    @ffi.conn_resume_sync_io(self.conn)
     // 等 worker 真的停了，之后 stmt 才能安全释放
     @ffi.conn_wait_job(self.conn)
     // 池上发起的查询：读完把连接还回池
@@ -148,7 +167,7 @@ fn Rd::bytes(self : Rd) -> Bytes raise TursoError {
   if self.p.val + n > self.b.length() {
     raise TursoError::QueryError("truncated result buffer")
   }
-  let out = self.b[self.p.val : self.p.val + n].to_owned()
+  let out = self.b[self.p.val:self.p.val + n].to_owned()
   self.p.val = self.p.val + n
   out
 }
@@ -181,13 +200,13 @@ fn stream_error(payload : Bytes) -> TursoError {
 
 ///|
 fn parse_columns(payload : Bytes) -> Array[@value.Column] raise TursoError {
-  let rd : Rd = { b: payload, p: Ref(0) }
+  let rd : Rd = { b: payload, p: Ref(0), }
   let n = rd.u32()
   let cols : Array[@value.Column] = []
   for _ in 0..<n {
     let name = @utf8.decode_lossy(rd.bytes())
     let decltype = @utf8.decode_lossy(rd.bytes())
-    cols.push({ name, decltype })
+    cols.push({ name, decltype, })
   }
   cols
 }
@@ -197,7 +216,7 @@ fn parse_cells(
   payload : Bytes,
   n_cols : Int,
 ) -> (Array[@value.Value], Array[Bytes]) raise TursoError {
-  let rd : Rd = { b: payload, p: Ref(0) }
+  let rd : Rd = { b: payload, p: Ref(0), }
   let vals : Array[@value.Value] = []
   let raws : Array[Bytes] = []
   for _ in 0..<n_cols {
@@ -274,6 +293,7 @@ async fn Connection::open_rows(
     columns: parse_columns(payload),
     stmt,
     conn: self.raw,
+    sync_io: self.sync_io,
     release,
     pending: Ref(None),
     pending_raw: Ref(None),
@@ -284,7 +304,7 @@ async fn Connection::open_rows(
 }
 
 ///|
-pub impl QueryExecutor for Connection with query(
+pub impl QueryExecutor for Connection with fn query(
   self : Connection,
   sql : String,
   params? : Array[&ToValue],

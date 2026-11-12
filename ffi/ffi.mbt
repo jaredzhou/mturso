@@ -15,6 +15,18 @@ pub type Db
 pub type Conn
 
 ///|
+/// Opaque sync database handle.
+pub type SyncDb
+
+///|
+/// Opaque sync operation handle.
+pub type SyncOp
+
+///|
+/// Opaque sync I/O queue item handle.
+pub type SyncIo
+
+///|
 /// 打开数据库。`path` 为 `:memory:` 或文件路径。
 #borrow(path)
 pub extern "c" fn db_open(path : Bytes) -> Db = "mturso_db_open"
@@ -28,6 +40,126 @@ pub extern "c" fn db_connect(db : Db) -> Conn = "mturso_db_connect"
 /// 显式关闭数据库（幂等；不调用也会由 finalizer 释放）。
 #borrow(db)
 pub extern "c" fn db_close(db : Db) = "mturso_db_close"
+
+///|
+#borrow(path, remote_url, client_name)
+pub extern "c" fn sync_db_new(
+  path : Bytes,
+  remote_url : Bytes,
+  client_name : Bytes,
+  long_poll_timeout_ms : Int,
+  bootstrap_if_empty : Bool,
+) -> SyncDb = "mturso_sync_db_new"
+
+///|
+#borrow(db)
+pub extern "c" fn sync_db_create(db : SyncDb) -> SyncOp = "mturso_sync_db_create"
+
+///|
+#borrow(db)
+pub extern "c" fn sync_db_connect(db : SyncDb) -> SyncOp = "mturso_sync_db_connect"
+
+///|
+#borrow(op)
+pub extern "c" fn sync_op_resume(op : SyncOp) -> Int = "mturso_sync_op_resume"
+
+///|
+#borrow(op)
+pub extern "c" fn sync_op_result_kind(op : SyncOp) -> Int = "mturso_sync_op_result_kind"
+
+///|
+#borrow(op, db)
+pub extern "c" fn sync_op_extract_connection(op : SyncOp, db : SyncDb) -> Conn = "mturso_sync_op_extract_connection"
+
+///|
+#borrow(db)
+pub extern "c" fn sync_db_close(db : SyncDb) = "mturso_sync_db_close"
+
+///|
+#borrow(op)
+pub extern "c" fn sync_op_close(op : SyncOp) = "mturso_sync_op_close"
+
+///|
+#borrow(db)
+pub extern "c" fn sync_db_take_io(db : SyncDb) -> SyncIo = "mturso_sync_db_take_io"
+
+///|
+#borrow(item)
+pub extern "c" fn sync_io_is_null(item : SyncIo) -> Bool = "mturso_sync_io_is_null"
+
+///|
+#borrow(db)
+pub extern "c" fn sync_db_step_callbacks(db : SyncDb) -> Int = "mturso_sync_db_step_callbacks"
+
+///|
+#borrow(item)
+pub extern "c" fn sync_io_kind(item : SyncIo) -> Int = "mturso_sync_io_kind"
+
+///|
+#borrow(item)
+pub extern "c" fn sync_io_http_url(item : SyncIo) -> Bytes = "mturso_sync_io_http_url"
+
+///|
+#borrow(item)
+pub extern "c" fn sync_io_http_method(item : SyncIo) -> Bytes = "mturso_sync_io_http_method"
+
+///|
+#borrow(item)
+pub extern "c" fn sync_io_http_path(item : SyncIo) -> Bytes = "mturso_sync_io_http_path"
+
+///|
+#borrow(item)
+pub extern "c" fn sync_io_http_body(item : SyncIo) -> Bytes = "mturso_sync_io_http_body"
+
+///|
+#borrow(item)
+pub extern "c" fn sync_io_http_header_count(item : SyncIo) -> Int = "mturso_sync_io_http_header_count"
+
+///|
+#borrow(item)
+pub extern "c" fn sync_io_http_header_key(
+  item : SyncIo,
+  index : Int,
+) -> Bytes = "mturso_sync_io_http_header_key"
+
+///|
+#borrow(item)
+pub extern "c" fn sync_io_http_header_value(
+  item : SyncIo,
+  index : Int,
+) -> Bytes = "mturso_sync_io_http_header_value"
+
+///|
+#borrow(item)
+pub extern "c" fn sync_io_full_read_path(item : SyncIo) -> Bytes = "mturso_sync_io_full_read_path"
+
+///|
+#borrow(item)
+pub extern "c" fn sync_io_full_write_path(item : SyncIo) -> Bytes = "mturso_sync_io_full_write_path"
+
+///|
+#borrow(item)
+pub extern "c" fn sync_io_full_write_content(item : SyncIo) -> Bytes = "mturso_sync_io_full_write_content"
+
+///|
+#borrow(item)
+pub extern "c" fn sync_io_status(item : SyncIo, status_code : Int) -> Int = "mturso_sync_io_status"
+
+///|
+#borrow(item, buffer)
+pub extern "c" fn sync_io_push_buffer(item : SyncIo, buffer : Bytes) -> Int = "mturso_sync_io_push_buffer"
+
+///|
+#borrow(item, message)
+pub extern "c" fn sync_io_poison(item : SyncIo, message : Bytes) -> Int = "mturso_sync_io_poison"
+
+///|
+#borrow(item)
+pub extern "c" fn sync_io_done(item : SyncIo) -> Int = "mturso_sync_io_done"
+
+///|
+#borrow(item)
+pub extern "c" fn sync_io_close(item : SyncIo) = "mturso_sync_io_close"
 
 ///|
 /// 执行 INSERT/UPDATE/DELETE/DDL，返回受影响行数；失败返回 -1。
@@ -96,6 +228,10 @@ pub extern "c" fn submit_stmt_rows(conn : Conn, stmt : Stmt) -> @types.Fd = "mtu
 /// 等本连接当前 job 结束（`close()` 释放语句前调用）。
 #borrow(conn)
 pub extern "c" fn conn_wait_job(conn : Conn) = "mturso_conn_wait_job"
+
+///|
+#borrow(conn)
+pub extern "c" fn conn_resume_sync_io(conn : Conn) = "mturso_conn_resume_sync_io"
 
 ///|
 /// 最近一次 INSERT 的 rowid。

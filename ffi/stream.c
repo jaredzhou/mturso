@@ -54,7 +54,13 @@ static void put_bytes(strbuf_t *sb, const char *value, int64_t len) {
   }
 }
 
-enum { FRAME_END = 0, FRAME_HEADER = 1, FRAME_ROW = 2, FRAME_ERR = 3 };
+enum {
+  FRAME_END = 0,
+  FRAME_HEADER = 1,
+  FRAME_ROW = 2,
+  FRAME_ERR = 3,
+  FRAME_IO = 4,
+};
 
 static int write_all(mturso_fd_t fd, const char *src, size_t len) {
   while (len > 0) {
@@ -90,7 +96,8 @@ void mturso_send_error_frame(mturso_fd_t fd, const char *msg, int kind) {
   free(sb.buf);
 }
 
-void mturso_stream_stmt_rows(turso_statement_t *stmt, mturso_fd_t fd) {
+void mturso_stream_stmt_rows(mturso_conn_t *conn, turso_statement_t *stmt,
+                             mturso_fd_t fd) {
   const char *error = NULL;
   strbuf_t sb = {0};
   int64_t n_cols = turso_statement_column_count(stmt);
@@ -108,6 +115,14 @@ void mturso_stream_stmt_rows(turso_statement_t *stmt, mturso_fd_t fd) {
   for (;;) {
     turso_status_code_t status = turso_statement_step(stmt, &error);
     if (status == TURSO_IO) {
+      if (mturso_conn_is_sync(conn)) {
+        mturso_conn_prepare_sync_io(conn);
+        frame_begin(&sb, FRAME_IO);
+        if (flush_frame(fd, &sb) != 0) {
+          goto done;
+        }
+        mturso_conn_wait_for_sync_io(conn);
+      }
       if (turso_statement_run_io(stmt, &error) != TURSO_OK) {
         mturso_send_error_frame(fd, error, MTURSO_ERR_QUERY);
         goto done;
