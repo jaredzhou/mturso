@@ -1,5 +1,10 @@
 ///|
+let sync_test_lock : @async.Semaphore = @async.Semaphore::Semaphore(1)
+
+///|
 async test "sync database opens offline when bootstrap is disabled" {
+  sync_test_lock.acquire()
+  defer sync_test_lock.release()
   let dir = @fs.tmpdir(prefix="mturso-sync-offline")
   defer @fs.rmdir(dir, recursive=true)
   let config = @mturso.SyncConfig::new(
@@ -32,6 +37,8 @@ async test "sync database opens offline when bootstrap is disabled" {
 
 ///|
 async test "sync database bootstraps remote data" {
+  sync_test_lock.acquire()
+  defer sync_test_lock.release()
   match @env.get_env_var("TURSODB") {
     Some(path) if path != "" => ()
     _ => return
@@ -94,6 +101,8 @@ async test "sync database bootstraps remote data" {
 
 ///|
 async test "sync database rejects an invalid remote URL" {
+  sync_test_lock.acquire()
+  defer sync_test_lock.release()
   let dir = @fs.tmpdir(prefix="mturso-sync-invalid-url")
   defer @fs.rmdir(dir, recursive=true)
   let config = @mturso.SyncConfig::new(
@@ -115,6 +124,8 @@ async test "sync database rejects an invalid remote URL" {
 
 ///|
 async test "sync database reports network failure during bootstrap" {
+  sync_test_lock.acquire()
+  defer sync_test_lock.release()
   let dir = @fs.tmpdir(prefix="mturso-sync-network-error")
   defer @fs.rmdir(dir, recursive=true)
   let config = @mturso.SyncConfig::new(
@@ -136,6 +147,8 @@ async test "sync database reports network failure during bootstrap" {
 
 ///|
 async test "sync database pushes committed local changes" {
+  sync_test_lock.acquire()
+  defer sync_test_lock.release()
   match @env.get_env_var("TURSODB") {
     Some(path) if path != "" => ()
     _ => return
@@ -203,6 +216,8 @@ async test "sync database pushes committed local changes" {
 
 ///|
 async test "sync push failure keeps local changes for retry" {
+  sync_test_lock.acquire()
+  defer sync_test_lock.release()
   match @env.get_env_var("TURSODB") {
     Some(path) if path != "" => ()
     _ => return
@@ -267,6 +282,8 @@ async test "sync push failure keeps local changes for retry" {
 
 ///|
 async test "sync pull applies remote changes and replays local changes" {
+  sync_test_lock.acquire()
+  defer sync_test_lock.release()
   match @env.get_env_var("TURSODB") {
     Some(path) if path != "" => ()
     _ => return
@@ -383,6 +400,8 @@ async test "sync pull applies remote changes and replays local changes" {
 
 ///|
 async test "sync database reports stats and checkpoints the WAL" {
+  sync_test_lock.acquire()
+  defer sync_test_lock.release()
   match @env.get_env_var("TURSODB") {
     Some(path) if path != "" => ()
     _ => return
@@ -431,6 +450,8 @@ async test "sync database reports stats and checkpoints the WAL" {
 
 ///|
 async test "sync database close rejects new work while draining operations" {
+  sync_test_lock.acquire()
+  defer sync_test_lock.release()
   match @env.get_env_var("TURSODB") {
     Some(path) if path != "" => ()
     _ => return
