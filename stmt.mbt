@@ -13,7 +13,10 @@ fn bind_one(stmt : @ffi.Stmt, pos : Int, v : @value.Value) -> Unit {
 }
 
 ///|
-fn bind_params(stmt : @ffi.Stmt, params : Array[&ToValue]?) -> Unit raise TursoError {
+fn bind_params(
+  stmt : @ffi.Stmt,
+  params : Array[&ToValue]?,
+) -> Unit raise TursoError {
   match params {
     None => ()
     Some(ps) => {
@@ -24,6 +27,19 @@ fn bind_params(stmt : @ffi.Stmt, params : Array[&ToValue]?) -> Unit raise TursoE
         pos = pos + 1
       }
     }
+  }
+}
+
+///|
+fn bind_values(
+  stmt : @ffi.Stmt,
+  params : Array[@value.Value],
+) -> Unit raise TursoError {
+  let mut pos = 1
+  for value in params {
+    bind_one(stmt, pos, value)
+    check_error()
+    pos = pos + 1
   }
 }
 

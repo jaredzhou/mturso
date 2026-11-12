@@ -18,10 +18,15 @@ pub async fn SyncServer::start(SyncServerConfig) -> Self raise @mturso.TursoErro
 pub async fn SyncServer::stop(Self) -> Unit
 pub async fn SyncServer::wait(Self) -> Int
 
+pub(all) enum SyncServerBackend {
+  External
+  Native
+}
+
 pub struct SyncServerConfig {
   // private fields
 }
-pub fn SyncServerConfig::new(String, tursodb_path? : String?, address? : String, startup_timeout_ms? : Int) -> Self
+pub fn SyncServerConfig::new(String, tursodb_path? : String?, native_executable? : String?, address? : String, startup_timeout_ms? : Int, backend? : SyncServerBackend) -> Self
 
 // Type aliases
 

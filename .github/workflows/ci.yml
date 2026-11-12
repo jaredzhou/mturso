@@ -87,6 +87,11 @@ jobs:
       - name: Format check (soft, see comment)
         run: moon fmt --warn
 
+      - name: Build native pipeline server
+        run: |
+          moon build cmd/native-server --target native
+          echo "MTURSO_NATIVE_SERVER=$PWD/_build/native/debug/build/cmd/native-server/native-server" >> "$GITHUB_ENV"
+
       # Build and run all tests.
       - name: Test
         run: moon test --target native --deny-warn
@@ -132,6 +137,13 @@ jobs:
       - name: Check
         shell: pwsh
         run: moon check --target native --deny-warn
+
+      - name: Build native pipeline server
+        shell: pwsh
+        run: |
+          moon build cmd/native-server --target native
+          $exe = Join-Path $PWD "_build/native/debug/build/cmd/native-server/native-server.exe"
+          "MTURSO_NATIVE_SERVER=$exe" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Test
         shell: pwsh

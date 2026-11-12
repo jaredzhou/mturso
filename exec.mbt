@@ -6,7 +6,7 @@ pub extend Connection with QueryExecutor::{query, query_one, execute}
 
 ///|
 /// 取第一行；零行抛 `NoRows`。
-pub impl QueryExecutor for Connection with query_one(
+pub impl QueryExecutor for Connection with fn query_one(
   self : Connection,
   sql : String,
   params? : Array[&ToValue],
@@ -22,7 +22,7 @@ pub impl QueryExecutor for Connection with query_one(
 ///|
 /// 执行语句（本版单语句）：复用 `query` 的读帧路径，把结果集排空，
 /// 受影响行数来自 END 帧。
-pub impl QueryExecutor for Connection with execute(
+pub impl QueryExecutor for Connection with fn execute(
   self : Connection,
   sql : String,
   params? : Array[&ToValue],
@@ -50,7 +50,7 @@ pub impl QueryExecutor for Connection with execute(
     if tail <= 0 {
       break
     }
-    let piece = @utf8.decode_lossy(data[start : start + tail].to_owned())
+    let piece = @utf8.decode_lossy(data[start:start + tail].to_owned())
     let rows = self.open_rows(piece, params?)
     while rows.has_next() {
       ignore(rows.get_row())
@@ -60,6 +60,21 @@ pub impl QueryExecutor for Connection with execute(
     start = start + tail
   }
   { changes: total, }
+}
+
+///|
+/// Execute one statement with dynamically decoded values.
+pub async fn Connection::execute_values(
+  self : Connection,
+  sql : String,
+  params : Array[@value.Value],
+) -> ExecResult raise TursoError {
+  let rows = self.query_values(sql, params)
+  while rows.has_next() {
+    ignore(rows.get_row())
+  }
+  rows.close()
+  { changes: rows.changes(), }
 }
 
 ///|

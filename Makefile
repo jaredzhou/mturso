@@ -13,8 +13,9 @@ endif
 TURSODB ?= $(TURSODB_CACHE)/$(TURSODB_EXE)
 SYNC_DB ?= .cache/turso-sync-server.db
 SYNC_ADDR ?= 127.0.0.1:8080
+NATIVE_SERVER ?= $(CURDIR)/_build/native/debug/build/cmd/native-server/native-server$(if $(filter Windows_NT,$(OS)),.exe,)
 
-.PHONY: check test download-cli test-server server server-wrapper fmt
+.PHONY: check test download-cli native-server native-server-run test-server server server-wrapper fmt
 
 check:
 	$(RUN_SHELL) '$(MOON) check --target native --deny-warn'
@@ -25,8 +26,14 @@ test:
 download-cli:
 	$(RUN_SHELL) 'bash scripts/fetch-tursodb-cli.sh'
 
-test-server: download-cli
-	$(RUN_SHELL) 'TURSODB="$(TURSODB)" $(MOON) test --target native --deny-warn server'
+native-server:
+	$(RUN_SHELL) '$(MOON) build cmd/native-server --target native'
+
+native-server-run: native-server
+	$(RUN_SHELL) 'mkdir -p "$(dir $(SYNC_DB))" && "$(NATIVE_SERVER)" "$(SYNC_DB)" "$(SYNC_ADDR)"'
+
+test-server: download-cli native-server
+	$(RUN_SHELL) 'TURSODB="$(TURSODB)" MTURSO_NATIVE_SERVER="$(NATIVE_SERVER)" $(MOON) test --target native --deny-warn server'
 
 server: download-cli
 	$(RUN_SHELL) 'mkdir -p "$(dir $(SYNC_DB))" && "$(TURSODB)" "$(SYNC_DB)" --sync-server "$(SYNC_ADDR)"'

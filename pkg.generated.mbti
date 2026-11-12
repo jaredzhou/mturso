@@ -41,6 +41,7 @@ pub fn Connection::close(Self) -> Unit
 pub fn Connection::exec_blocking(Self, String) -> Int64 raise TursoError
 pub fn Connection::exec_params(Self, String, params? : Array[&ToValue]) -> Int64 raise TursoError
 pub async fn Connection::execute(Self, String, params? : Array[&ToValue]) -> ExecResult raise TursoError
+pub async fn Connection::execute_values(Self, String, Array[@value.Value]) -> ExecResult raise TursoError
 pub async fn[T : FromRow] Connection::fetch(Self, String, params? : Array[&ToValue]) -> Array[T] raise TursoError
 pub async fn[T : FromRow] Connection::fetch_one(Self, String, params? : Array[&ToValue]) -> T raise TursoError
 pub fn Connection::is_closed(Self) -> Bool
@@ -48,6 +49,7 @@ pub fn Connection::last_insert_rowid(Self) -> Int64 raise TursoError
 pub async fn Connection::open(String) -> Self raise TursoError
 pub async fn Connection::query(Self, String, params? : Array[&ToValue]) -> &Rows raise TursoError
 pub async fn Connection::query_one(Self, String, params? : Array[&ToValue]) -> Row raise TursoError
+pub async fn Connection::query_values(Self, String, Array[@value.Value]) -> &Rows raise TursoError
 pub async fn Connection::sqlite_version(Self) -> String raise TursoError
 pub impl Fetching for Connection
 pub impl QueryExecutor for Connection
@@ -114,6 +116,7 @@ pub struct ResultRows {
   closed : @ref.Ref[Bool]
   // private fields
 }
+pub fn ResultRows::changes(Self) -> Int64
 pub fn ResultRows::close(Self) -> Unit
 pub fn ResultRows::columns(Self) -> Array[@value.Column]
 pub fn ResultRows::get_row(Self) -> Row raise TursoError
@@ -277,6 +280,7 @@ pub(open) trait Rows {
   async fn has_next(Self) -> Bool raise TursoError
   fn get_row(Self) -> Row raise TursoError
   fn columns(Self) -> Array[@value.Column]
+  fn changes(Self) -> Int64
   fn close(Self) -> Unit
 }
 

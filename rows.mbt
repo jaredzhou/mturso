@@ -7,6 +7,7 @@ pub(open) trait Rows {
   async fn has_next(Self) -> Bool raise TursoError
   fn get_row(Self) -> Row raise TursoError
   fn columns(Self) -> Array[@value.Column]
+  fn changes(Self) -> Int64
   /// 同步、不抛、幂等 —— 关掉读端就等于取消（worker 的 write 拿到 EPIPE 就停）。
   fn close(Self) -> Unit
 }
@@ -98,6 +99,11 @@ pub impl Rows for ResultRows with fn columns(self) {
 }
 
 ///|
+pub impl Rows for ResultRows with fn changes(self) {
+  self.changes.val
+}
+
+///|
 pub impl Rows for ResultRows with fn close(self) {
   if !self.closed.val {
     self.closed.val = true
@@ -116,7 +122,7 @@ pub impl Rows for ResultRows with fn close(self) {
 
 ///|
 /// 让具体类型上的 `rows.has_next()` 这类 dot 调用也成立（不只是 `&Rows`）。
-pub extend ResultRows with Rows::{has_next, get_row, columns, close}
+pub extend ResultRows with Rows::{has_next, get_row, columns, changes, close}
 
 // ---------------------------------------------------------------------------
 // 二进制读游标（小端）
@@ -310,4 +316,59 @@ pub impl QueryExecutor for Connection with fn query(
   params? : Array[&ToValue],
 ) -> &Rows raise TursoError {
   self.open_rows(sql, params?)
+}
+
+///|
+/// Query with dynamically decoded values, used by SQL-over-HTTP servers.
+pub async fn Connection::query_values(
+  self : Connection,
+  sql : String,
+  params : Array[@value.Value],
+) -> &Rows raise TursoError {
+  self.ensure_open()
+  let encoded = @utf8.encode(sql)
+  let stmt = @ffi.conn_prepare_first(self.raw, encoded)
+  check_error()
+  let mut extra = false
+  for i in @ffi.stmt_tail(stmt).to_int()..<encoded.length() {
+    let c = encoded[i].to_int()
+    if c != 59 && c != 32 && c != 10 && c != 13 && c != 9 {
+      extra = true
+    }
+  }
+  if extra {
+    raise TursoError::QueryError("query_values() accepts a single statement")
+  }
+  bind_values(stmt, params)
+  let fd = @ffi.submit_stmt_rows(self.raw, stmt)
+  check_error()
+  let stream = @raw_fd.RawFdStream(fd) catch {
+    _ => {
+      @ffi.conn_wait_job(self.raw)
+      raise TursoError::ConnectionError("failed to wrap result fd")
+    }
+  }
+  errdefer {
+    stream.close()
+    @ffi.conn_wait_job(self.raw)
+  }
+  let (tag, payload) = read_frame(stream)
+  match tag {
+    1 => ()
+    3 => raise stream_error(payload)
+    _ => raise TursoError::QueryError("unexpected first frame tag \{tag}")
+  }
+  {
+    stream,
+    columns: parse_columns(payload),
+    stmt,
+    conn: self.raw,
+    sync_io: self.sync_io,
+    release: None,
+    pending: Ref(None),
+    pending_raw: Ref(None),
+    changes: Ref(0L),
+    done: Ref(false),
+    closed: Ref(false),
+  }
 }

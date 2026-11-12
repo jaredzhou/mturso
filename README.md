@@ -354,7 +354,7 @@ async fn demo(conn : @mturso.Connection) -> Unit raise @mturso.TursoError {
 
 ```bash
 moon check --target native      # type check
-moon test  --target native      # run the test suite (50 tests)
+moon test  --target native      # run the test suite (51 tests)
 ```
 
 Do not run a bare `moon fmt` over the sources: this toolchain respells `Int` to `Int32`. If you do, revert with `sed -i 's/Int32/Int/g'` on the touched files.
@@ -363,8 +363,10 @@ The sync-server development helpers download the pinned Turso CLI into `.cache/`
 
 ```bash
 make download-cli               # fetch and verify tursodb 0.8.2
-make test-server                # run sync-server lifecycle tests
+make native-server              # build the self-hosted pipeline server
+make test-server                # lifecycle + native pipeline tests
 make server                     # start foreground server on 127.0.0.1:8080
+make native-server-run          # start the self-hosted pipeline server
 ```
 
 On Windows, install GNU Make; the `Makefile` locates Git Bash through `git` and
@@ -372,6 +374,24 @@ uses it automatically for these targets.
 
 Override `SYNC_DB`, `SYNC_ADDR`, or `TURSODB` when needed. `make server-wrapper`
 starts the `cmd/server` MoonBit executable instead of invoking `tursodb` directly.
+
+`SyncServerConfig` selects the external pinned CLI by default. The native
+backend uses the in-process MoonBit HTTP server and Turso engine:
+
+```moonbit
+let server = @server.SyncServer::start(
+  @server.SyncServerConfig::new(
+    "./server.db",
+    backend=@server.SyncServerBackend::Native,
+    native_executable=Some("./native-server"),
+  ),
+)
+```
+
+The native backend implements `/v2/pipeline`, `/v3/pipeline`, and
+`/v3/cursor`, including batches, conditional steps, positional parameters,
+typed rows, BLOB/base64, and per-step errors. It is loopback-only and does not
+yet persist batons for interactive transactions spanning multiple HTTP requests.
 
 Real Turso Cloud validation is optional because deterministic CI uses the pinned
 local server. To smoke-test a Cloud database, provide the URL and token through
@@ -418,7 +438,8 @@ Layout:
 | `tx.mbt` / `retry.mbt` | transactions and retry helpers |
 | `pool.mbt` | `PoolStats` + `Database`'s pool-side impls |
 | `sync.mbt` | `SyncDatabase`, operation driver, and MoonBit-owned sync I/O |
-| `server/` | loopback `SyncServer` lifecycle around pinned `tursodb` |
+| `server/` | shared external/native `SyncServer` facade and lifecycle |
+| `cmd/native-server/` | self-hosted loopback SQL-over-HTTP pipeline server |
 | `ffi/` | `extern "c"` declarations + thin C stub + vendored Turso headers |
 | `design/` | Compiler-checked design spec (`moon check` clean) |
 | `libs/` | The Turso C shared library |

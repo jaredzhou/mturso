@@ -1,21 +1,39 @@
 // Local Turso sync server lifecycle for the external-server phase.
 
 ///|
+/// Selects the server implementation managed by the shared facade.
+pub(all) enum SyncServerBackend {
+  External
+  Native
+}
+
+///|
 pub struct SyncServerConfig {
   priv database_path : String
   priv tursodb_path : String?
+  priv native_executable : String?
   priv address : String
   priv startup_timeout_ms : Int
+  priv backend : SyncServerBackend
 }
 
 ///|
 pub fn SyncServerConfig::new(
   database_path : String,
   tursodb_path~ : String? = None,
+  native_executable~ : String? = None,
   address~ : String = "127.0.0.1:0",
   startup_timeout_ms~ : Int = 10_000,
+  backend~ : SyncServerBackend = External,
 ) -> SyncServerConfig {
-  { database_path, tursodb_path, address, startup_timeout_ms, }
+  {
+    database_path,
+    tursodb_path,
+    native_executable,
+    address,
+    startup_timeout_ms,
+    backend,
+  }
 }
 
 ///|
@@ -41,6 +59,24 @@ fn resolve_tursodb_path(configured : String?) -> String {
       match @env.get_env_var("TURSODB") {
         Some(path) if path != "" => path
         _ => "tursodb"
+      }
+  }
+}
+
+///|
+fn resolve_native_executable(
+  configured : String?,
+) -> String raise @mturso.TursoError {
+  match configured {
+    Some(path) if path != "" => path
+    _ =>
+      match @env.get_env_var("MTURSO_NATIVE_SERVER") {
+        Some(path) if path != "" => path
+        _ =>
+          raise sync_server_error(
+            @mturso.SyncErrorKind::Internal,
+            "native server executable is not configured; set native_executable or MTURSO_NATIVE_SERVER",
+          )
       }
   }
 }
@@ -176,13 +212,23 @@ pub async fn SyncServer::start(
       "startup_timeout_ms must be positive",
     )
   }
-  let executable = resolve_tursodb_path(config.tursodb_path)
-  check_tursodb_version(executable)
+  let executable = match config.backend {
+    External => {
+      let executable = resolve_tursodb_path(config.tursodb_path)
+      check_tursodb_version(executable)
+      executable
+    }
+    Native => resolve_native_executable(config.native_executable)
+  }
   let address = allocate_port(config.address)
+  let process_args = match config.backend {
+    External => [config.database_path, "--sync-server", address]
+    Native => [config.database_path, address]
+  }
   let process = try
     @process.spawn_orphan(
       executable,
-      [config.database_path, "--sync-server", address],
+      process_args,
       stdout=Discard,
       stderr=Discard,
       no_console_window=true,

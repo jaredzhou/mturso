@@ -12,6 +12,7 @@ import {
 
 import {
   "moonbitlang/core/async/fs",
+  "moonbitlang/core/json",
 } for "test"
 
 options(
