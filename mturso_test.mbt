@@ -148,6 +148,38 @@ async test "慢查询（SQL 里 sleep 2s）不阻塞另一个连接上的快查�
 }
 
 ///|
+async test "慢 execute 不阻塞另一个连接上的快查询" {
+  let db = @mturso.Database::open(":memory:")
+  defer db.close()
+  let slow = db.connect()
+  let fast = db.connect()
+  defer slow.close()
+  defer fast.close()
+
+  let slow_ms : Ref[Int64] = { val: 0L, }
+  let fast_ms : Ref[Int64] = { val: 0L, }
+
+  @async.with_task_group(group => {
+    group.spawn_bg(() => {
+      let t = @async.now()
+      ignore(slow.execute("select turso_sleep(2000)"))
+      slow_ms.val = @async.now() - t
+    })
+    @async.sleep(200)
+    let t = @async.now()
+    let rows = fast.query("select 6 * 7")
+    assert_true(rows.has_next())
+    let v : Int64 = rows.get_row().get(0)
+    assert_true(v == 42L)
+    rows.close()
+    fast_ms.val = @async.now() - t
+  })
+
+  assert_true(slow_ms.val >= 2000L)
+  assert_true(fast_ms.val < 1000L)
+}
+
+///|
 async test "类型化行集：整数/浮点/文本/blob/null 按类型取到，不再是 TSV 文本" {
   let db = @mturso.Database::open(":memory:")
   defer db.close()
@@ -223,11 +255,11 @@ async test "参数绑定：单个 / 多个 / NULL，结果与字面量一致" {
       "create table t(a integer, b text, c blob, d integer, e real)",
     ),
   )
-  let n = conn.exec_params(
+  let inserted = conn.execute(
     "insert into t values (?1, ?2, ?3, ?4, ?5)",
     params=[(42 : Int), "hi", b"\x01\x02", (None : Int?), 1.5],
   )
-  assert_true(n == 1L)
+  assert_true(inserted.affected_rows() == 1)
 
   let rows = conn.query("select a, b, c, d, e from t")
   defer rows.close()

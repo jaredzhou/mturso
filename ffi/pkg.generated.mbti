@@ -10,8 +10,6 @@ pub fn conn_close(Conn) -> Unit
 
 pub fn conn_exec(Conn, Bytes) -> Int64
 
-pub fn conn_execute_stmt(Conn, Stmt) -> Int64
-
 pub fn conn_get_autocommit(Conn) -> Int
 
 pub fn conn_last_insert_rowid(Conn) -> Int64
@@ -49,6 +47,8 @@ pub fn stmt_column_count(Stmt) -> Int
 pub fn stmt_deinit(Stmt) -> Unit
 
 pub fn stmt_tail(Stmt) -> Int64
+
+pub fn submit_stmt_execute(Conn, Stmt) -> @types.Fd
 
 pub fn submit_stmt_rows(Conn, Stmt) -> @types.Fd
 

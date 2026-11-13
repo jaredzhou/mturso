@@ -31,49 +31,16 @@ fn bind_params(
 }
 
 ///|
-fn bind_values(
-  stmt : @ffi.Stmt,
-  params : Array[@value.Value],
-) -> Unit raise TursoError {
-  let mut pos = 1
-  for value in params {
-    bind_one(stmt, pos, value)
-    check_error()
-    pos = pos + 1
-  }
-}
-
-///|
-/// 同步：带位置参数的 execute（`?1`..）。prepare + bind 在 MoonBit 侧完成，
-/// C 里没有任何参数编码。
-pub fn Connection::exec_params(
+/// Prepare one statement and bind positional parameters (`?1`..).
+fn Connection::prepare_params(
   self : Connection,
   sql : String,
   params? : Array[&ToValue],
-) -> Int64 raise TursoError {
+) -> @ffi.Stmt raise TursoError {
   self.ensure_open()
   let stmt = @ffi.conn_prepare(self.raw, @utf8.encode(sql))
   check_error()
-  defer @ffi.stmt_deinit(stmt)
+  errdefer @ffi.stmt_deinit(stmt)
   bind_params(stmt, params)
-  let changes = @ffi.conn_execute_stmt(self.raw, stmt)
-  check_error()
-  changes
-}
-
-///|
-/// Execute one statement with dynamically decoded values and discard any rows.
-pub fn Connection::exec_values(
-  self : Connection,
-  sql : String,
-  params : Array[@value.Value],
-) -> Int64 raise TursoError {
-  self.ensure_open()
-  let stmt = @ffi.conn_prepare(self.raw, @utf8.encode(sql))
-  check_error()
-  defer @ffi.stmt_deinit(stmt)
-  bind_values(stmt, params)
-  let changes = @ffi.conn_execute_stmt(self.raw, stmt)
-  check_error()
-  changes
+  stmt
 }

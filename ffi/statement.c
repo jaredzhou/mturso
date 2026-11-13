@@ -149,30 +149,8 @@ void mturso_stmt_bind_blob(mturso_stmt_t *stmt, int32_t pos,
       (size_t)Moonbit_array_length(value)));
 }
 
-MOONBIT_FFI_EXPORT
-int64_t mturso_conn_execute_stmt(mturso_conn_t *conn, mturso_stmt_t *stmt) {
-  mturso_clear_err();
-  if (mturso_conn_raw(conn) == NULL) {
-    mturso_set_err("connection is not open");
-    return -1;
-  }
-  if (stmt == NULL || stmt->stmt == NULL) {
-    mturso_set_err("statement is not open");
-    return -1;
-  }
-
-  uint64_t changes = 0;
-  const char *err = NULL;
-  turso_status_code_t status = turso_statement_execute(stmt->stmt, &changes, &err);
-  if (status != TURSO_DONE) {
-    mturso_set_err_kind(err, mturso_kind_from_status(status));
-    return -1;
-  }
-  return (int64_t)changes;
-}
-
-MOONBIT_FFI_EXPORT
-mturso_fd_t mturso_submit_stmt_rows(mturso_conn_t *conn, mturso_stmt_t *stmt) {
+static mturso_fd_t submit_stmt_job(mturso_conn_t *conn, mturso_stmt_t *stmt,
+                                   int job_kind) {
   mturso_clear_err();
   if (stmt == NULL || stmt->stmt == NULL) {
     mturso_set_err("statement is not open");
@@ -184,10 +162,21 @@ mturso_fd_t mturso_submit_stmt_rows(mturso_conn_t *conn, mturso_stmt_t *stmt) {
     mturso_set_err("failed to create result channel");
     return MTURSO_INVALID_FD;
   }
-  if (mturso_submit_job(conn, stmt->stmt, fds[1]) != 0) {
+  if (mturso_submit_job(conn, stmt->stmt, fds[1], job_kind) != 0) {
     mturso_fd_close(fds[0]);
     mturso_fd_close(fds[1]);
     return MTURSO_INVALID_FD;
   }
   return fds[0];
+}
+
+MOONBIT_FFI_EXPORT
+mturso_fd_t mturso_submit_stmt_rows(mturso_conn_t *conn, mturso_stmt_t *stmt) {
+  return submit_stmt_job(conn, stmt, MTURSO_JOB_ROWS);
+}
+
+MOONBIT_FFI_EXPORT
+mturso_fd_t mturso_submit_stmt_execute(mturso_conn_t *conn,
+                                       mturso_stmt_t *stmt) {
+  return submit_stmt_job(conn, stmt, MTURSO_JOB_EXECUTE);
 }

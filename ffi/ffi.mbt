@@ -279,11 +279,6 @@ pub extern "c" fn stmt_deinit(stmt : Stmt) = "mturso_stmt_deinit"
 pub extern "c" fn stmt_column_count(stmt : Stmt) -> Int = "mturso_stmt_column_count"
 
 ///|
-/// Execute one prepared statement through Turso's dedicated execute ABI.
-#borrow(conn, stmt)
-pub extern "c" fn conn_execute_stmt(conn : Conn, stmt : Stmt) -> Int64 = "mturso_conn_execute_stmt"
-
-///|
 #borrow(stmt)
 pub extern "c" fn stmt_bind_null(stmt : Stmt, pos : Int) = "mturso_stmt_bind_null"
 
@@ -307,6 +302,11 @@ pub extern "c" fn stmt_bind_blob(stmt : Stmt, pos : Int, value : Bytes) = "mturs
 /// 流式跑一条已经 prepare + bind 好的语句；返回读端 fd/HANDLE，失败通过 last_error 报告。
 #borrow(conn, stmt)
 pub extern "c" fn submit_stmt_rows(conn : Conn, stmt : Stmt) -> @types.Fd = "mturso_submit_stmt_rows"
+
+///|
+/// Execute one prepared statement on the connection worker.
+#borrow(conn, stmt)
+pub extern "c" fn submit_stmt_execute(conn : Conn, stmt : Stmt) -> @types.Fd = "mturso_submit_stmt_execute"
 
 ///|
 /// 等本连接当前 job 结束（`close()` 释放语句前调用）。

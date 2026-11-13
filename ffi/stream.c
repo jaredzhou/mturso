@@ -86,6 +86,38 @@ static int flush_frame(mturso_fd_t fd, strbuf_t *sb) {
   return write_all(fd, sb->buf, sb->len);
 }
 
+static int write_empty_frame(mturso_fd_t fd, uint8_t tag) {
+  strbuf_t sb = {0};
+  frame_begin(&sb, tag);
+  int rc = flush_frame(fd, &sb);
+  free(sb.buf);
+  return rc;
+}
+
+static void write_changes_frame(mturso_fd_t fd, int64_t changes) {
+  strbuf_t sb = {0};
+  frame_begin(&sb, FRAME_END);
+  put_i64(&sb, changes);
+  (void)flush_frame(fd, &sb);
+  free(sb.buf);
+}
+
+static int run_io_step(mturso_conn_t *conn, turso_statement_t *stmt,
+                       mturso_fd_t fd, const char **error) {
+  if (mturso_conn_is_sync(conn)) {
+    mturso_conn_prepare_sync_io(conn);
+    if (write_empty_frame(fd, FRAME_IO) != 0) {
+      return -1;
+    }
+    mturso_conn_wait_for_sync_io(conn);
+  }
+  if (turso_statement_run_io(stmt, error) != TURSO_OK) {
+    mturso_send_error_frame(fd, *error, MTURSO_ERR_QUERY);
+    return -1;
+  }
+  return 0;
+}
+
 void mturso_send_error_frame(mturso_fd_t fd, const char *msg, int kind) {
   const char *message = msg != NULL ? msg : "unknown error";
   strbuf_t sb = {0};
@@ -174,4 +206,67 @@ void mturso_stream_stmt_rows(mturso_conn_t *conn, turso_statement_t *stmt,
 
 done:
   free(sb.buf);
+}
+
+// The dedicated execute ABI may still return ROW/OK/IO before DONE, matching
+// tursogo's executeFully loop. Rows are discarded because execute reports only
+// affected changes.
+void mturso_stream_stmt_execute(mturso_conn_t *conn, turso_statement_t *stmt,
+                                mturso_fd_t fd) {
+  const char *error = NULL;
+  uint64_t latest = 0;
+
+  for (;;) {
+    turso_status_code_t status =
+        turso_statement_execute(stmt, &latest, &error);
+    if (status == TURSO_DONE) {
+      write_changes_frame(fd, (int64_t)latest);
+      return;
+    }
+    if (status == TURSO_IO) {
+      if (run_io_step(conn, stmt, fd, &error) != 0) {
+        return;
+      }
+      continue;
+    }
+    if (status == TURSO_ROW) {
+      for (;;) {
+        status = turso_statement_step(stmt, &error);
+        if (status == TURSO_ROW) {
+          continue;
+        }
+        if (status == TURSO_DONE) {
+          write_changes_frame(fd, (int64_t)latest);
+          return;
+        }
+        if (status == TURSO_IO) {
+          if (run_io_step(conn, stmt, fd, &error) != 0) {
+            return;
+          }
+          continue;
+        }
+        if (status == TURSO_OK) {
+          continue;
+        }
+        mturso_send_error_frame(fd, error, mturso_kind_from_status(status));
+        return;
+      }
+    }
+    if (status == TURSO_OK) {
+      status = turso_statement_step(stmt, &error);
+      if (status == TURSO_DONE) {
+        write_changes_frame(fd, (int64_t)latest);
+        return;
+      }
+      if (status == TURSO_IO) {
+        if (run_io_step(conn, stmt, fd, &error) != 0) {
+          return;
+        }
+        continue;
+      }
+      continue;
+    }
+    mturso_send_error_frame(fd, error, mturso_kind_from_status(status));
+    return;
+  }
 }

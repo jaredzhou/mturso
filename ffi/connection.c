@@ -19,6 +19,7 @@ struct mturso_conn {
   int shutdown;
   mturso_fd_t stream_fd;
   turso_statement_t *job_stmt;
+  int job_kind;
   int busy;
   int sync_mode;
   int waiting_for_sync_io;
@@ -169,13 +170,17 @@ static void *conn_worker(void *arg)
     }
 
     turso_statement_t *stmt = handle->job_stmt;
+    int job_kind = handle->job_kind;
     mturso_fd_t fd = handle->stream_fd;
     handle->job_stmt = NULL;
+    handle->job_kind = 0;
     handle->stream_fd = MTURSO_INVALID_FD;
     handle->has_job = 0;
     mturso_mutex_unlock(&handle->mu);
 
-    if (stmt != NULL) {
+    if (stmt != NULL && job_kind == MTURSO_JOB_EXECUTE) {
+      mturso_stream_stmt_execute(handle, stmt, fd);
+    } else if (stmt != NULL) {
       mturso_stream_stmt_rows(handle, stmt, fd);
     } else {
       mturso_send_error_frame(fd, "connection job has no statement",
@@ -329,7 +334,7 @@ int64_t mturso_conn_exec(mturso_conn_t *conn, moonbit_bytes_t sql) {
 }
 
 int mturso_submit_job(mturso_conn_t *conn, turso_statement_t *stmt,
-                      mturso_fd_t stream_fd) {
+                      mturso_fd_t stream_fd, int job_kind) {
   if (conn == NULL || conn->conn == NULL) {
     mturso_set_err("connection is not open");
     return -1;
@@ -347,6 +352,7 @@ int mturso_submit_job(mturso_conn_t *conn, turso_statement_t *stmt,
   }
   conn->stream_fd = stream_fd;
   conn->job_stmt = stmt;
+  conn->job_kind = job_kind;
   conn->busy = 1;
   conn->has_job = 1;
   mturso_cond_signal(&conn->cv);

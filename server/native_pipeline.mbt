@@ -97,12 +97,12 @@ fn encode_value(value : @mturso.Value) -> @json.Json {
 }
 
 ///|
-fn decode_args(stmt : HranaStmt) -> Array[@mturso.Value] raise {
+fn decode_args(stmt : HranaStmt) -> Array[&@mturso.ToValue] raise {
   let args = match stmt.args {
     Some(args) => args
     None => []
   }
-  let values = []
+  let values : Array[&@mturso.ToValue] = []
   for arg in args {
     values.push(
       match arg {
@@ -135,7 +135,7 @@ async fn execute_statement(
     None => true
   }
   if !want_rows {
-    let affected = conn.exec_values(sql, args)
+    let affected = conn.execute(sql, params=args).affected_rows().to_int64()
     let last_rowid = if affected > 0L {
       @json.Json::string(conn.last_insert_rowid().to_string())
     } else {
@@ -151,7 +151,7 @@ async fn execute_statement(
       ("query_duration_ms", @json.Json::number(0)),
     ])
   }
-  let rows = conn.query_values(sql, args)
+  let rows = conn.query(sql, params=args)
   defer rows.close()
   let columns = rows.columns()
   let encoded_columns = []

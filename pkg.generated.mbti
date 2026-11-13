@@ -39,8 +39,6 @@ pub struct Connection {
 pub fn Connection::autocommit(Self) -> Bool raise TursoError
 pub async fn Connection::begin_tx(Self, opts? : TxOptions) -> DbTx raise TursoError
 pub fn Connection::close(Self) -> Unit
-pub fn Connection::exec_params(Self, String, params? : Array[&ToValue]) -> Int64 raise TursoError
-pub fn Connection::exec_values(Self, String, Array[@value.Value]) -> Int64 raise TursoError
 pub async fn Connection::execute(Self, String, params? : Array[&ToValue]) -> ExecResult raise TursoError
 pub async fn[T : FromRow] Connection::fetch(Self, String, params? : Array[&ToValue]) -> Array[T] raise TursoError
 pub async fn[T : FromRow] Connection::fetch_one(Self, String, params? : Array[&ToValue]) -> T raise TursoError
@@ -49,7 +47,6 @@ pub fn Connection::last_insert_rowid(Self) -> Int64 raise TursoError
 pub async fn Connection::open(String) -> Self raise TursoError
 pub async fn Connection::query(Self, String, params? : Array[&ToValue]) -> &Rows raise TursoError
 pub async fn Connection::query_one(Self, String, params? : Array[&ToValue]) -> Row raise TursoError
-pub async fn Connection::query_values(Self, String, Array[@value.Value]) -> &Rows raise TursoError
 pub async fn Connection::sqlite_version(Self) -> String raise TursoError
 pub impl Fetching for Connection
 pub impl QueryExecutor for Connection

@@ -28,7 +28,7 @@ async fn main {
 - **Bind values safely with `ToValue`** — pass `params=[...]` and let `ToValue` encode integers, floats, strings, blobs, options, JSON, timestamps and tuples; `FromValue` / `FromRow` decode them back. No SQL string building.
 - **Built-in connection pool** — `Database` is the pool: `max_conns` caps concurrency, `db.query` / `db.execute` borrow a connection automatically, `db.connect()` checks one out explicitly, and `db.stats()` shows contention.
 - **First-class transactions** — `begin_tx` / `commit` / `rollback`, with `Deferred`, `Immediate`, `Exclusive`, and Turso's `BEGIN CONCURRENT`; `begin_func` commits on success and rolls back on error.
-- **Async without blocking the event loop** — every connection runs on its own external C worker thread, so a slow query never freezes the MoonBit event loop; `max_conns` keeps that thread budget under control.
+- **Async without blocking the event loop** — every connection runs on its own external C worker thread, so slow queries and execute jobs never freeze the MoonBit event loop; `max_conns` keeps that thread budget under control.
 - **Retries that understand contention** — `retry_tx` reruns a whole transaction on `Busy` (WAL write lock) or `Conflict` (MVCC write-write), with full-jitter backoff and a bounded budget.
 - **Offline-first sync** — `SyncDatabase` wraps Turso's sync engine with `push`, `pull`, `checkpoint`, and `stats`; SQL reads and transactions use the same public `Connection`.
 - **Errors you can match on** — `TursoError` separates connection, query, no-rows, busy, and conflict failures.
@@ -353,7 +353,7 @@ async fn demo(conn : @mturso.Connection) -> Unit raise @mturso.TursoError {
 
 ```bash
 moon check --target native      # type check
-moon test  --target native      # run the test suite (61 tests)
+moon test  --target native      # run the test suite (62 tests)
 ```
 
 Do not run a bare `moon fmt` over the sources: this toolchain respells `Int` to `Int32`. If you do, revert with `sed -i 's/Int32/Int/g'` on the touched files.
