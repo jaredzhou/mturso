@@ -65,6 +65,9 @@ typedef struct {
                                                      size_t);
   int64_t (*turso_statement_row_value_bytes_count)(const turso_statement_t *,
                                                    size_t);
+  turso_status_code_t (*turso_statement_execute)(const turso_statement_t *,
+                                                 uint64_t *,
+                                                 const char **);
   turso_status_code_t (*turso_statement_step)(const turso_statement_t *,
                                               const char **);
   turso_status_code_t (*turso_statement_run_io)(const turso_statement_t *,
@@ -174,6 +177,7 @@ extern turso_api_t mturso_api;
   mturso_api.turso_statement_row_value_bytes_ptr
 #define turso_statement_row_value_bytes_count \
   mturso_api.turso_statement_row_value_bytes_count
+#define turso_statement_execute mturso_api.turso_statement_execute
 #define turso_statement_step mturso_api.turso_statement_step
 #define turso_statement_run_io mturso_api.turso_statement_run_io
 #define turso_statement_deinit mturso_api.turso_statement_deinit

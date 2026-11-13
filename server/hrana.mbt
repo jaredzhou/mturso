@@ -1,51 +1,38 @@
 // Typed subset of the Hrana request model used by the native server.
 
 ///|
-pub(all) struct PipelineRequest {
-  baton : String?
-  requests : Array[PipelineCommand]
+pub struct PipelineRequest {
+  priv baton : String?
+  priv requests : Array[PipelineCommand]
 }
 
 ///|
-pub(all) struct CursorRequest {
-  baton : String?
-  batch : HranaBatch
+pub struct CursorRequest {
+  priv baton : String?
+  priv batch : HranaBatch
 }
 
 ///|
-pub(all) struct HranaStmt {
+priv struct HranaStmt {
   sql : String?
-  sql_id : Int?
   args : Array[HranaValue]?
-  named_args : Array[HranaNamedArg]?
+  named_args_present : Bool
   want_rows : Bool?
-  replication_index : Int64?
 }
 
 ///|
-#derive(@json.FromJson)
-pub(all) struct HranaNamedArg {
-  name : String
-  value : HranaValue
-}
-
-///|
-pub extend HranaNamedArg with @json.FromJson::{from_json}
-
-///|
-pub(all) struct HranaBatch {
+priv struct HranaBatch {
   steps : Array[HranaBatchStep]
-  replication_index : Int64?
 }
 
 ///|
-pub(all) struct HranaBatchStep {
+priv struct HranaBatchStep {
   condition : HranaBatchCondition?
   stmt : HranaStmt
 }
 
 ///|
-pub(all) enum PipelineCommand {
+priv enum PipelineCommand {
   Execute(HranaStmt)
   Batch(HranaBatch)
   Close
@@ -53,7 +40,7 @@ pub(all) enum PipelineCommand {
 }
 
 ///|
-pub(all) enum HranaBatchCondition {
+priv enum HranaBatchCondition {
   Ok(Int)
   Error(Int)
   Not(HranaBatchCondition)
@@ -64,7 +51,7 @@ pub(all) enum HranaBatchCondition {
 }
 
 ///|
-pub(all) enum HranaValue {
+priv enum HranaValue {
   Null
   Integer(Int64)
   Real(Double)
@@ -146,41 +133,33 @@ pub impl @json.FromJson for CursorRequest with fn from_json(
 pub extend CursorRequest with @json.FromJson::{from_json}
 
 ///|
-pub impl @json.FromJson for HranaStmt with fn from_json(
+impl @json.FromJson for HranaStmt with fn from_json(
   json : @json.Json,
   path : @json.JsonPath,
 ) -> HranaStmt raise @json.JsonDecodeError {
   let fields = request_object(json, path)
+  let named_args : Array[@json.Json]? = optional_field(
+    fields, "named_args", path,
+  )
   {
     sql: optional_field(fields, "sql", path),
-    sql_id: optional_field(fields, "sql_id", path),
     args: optional_field(fields, "args", path),
-    named_args: optional_field(fields, "named_args", path),
+    named_args_present: named_args is Some(args) && !args.is_empty(),
     want_rows: optional_field(fields, "want_rows", path),
-    replication_index: optional_field(fields, "replication_index", path),
   }
 }
 
 ///|
-pub extend HranaStmt with @json.FromJson::{from_json}
-
-///|
-pub impl @json.FromJson for HranaBatch with fn from_json(
+impl @json.FromJson for HranaBatch with fn from_json(
   json : @json.Json,
   path : @json.JsonPath,
 ) -> HranaBatch raise @json.JsonDecodeError {
   let fields = request_object(json, path)
-  {
-    steps: required_field(fields, "steps", path),
-    replication_index: optional_field(fields, "replication_index", path),
-  }
+  { steps: required_field(fields, "steps", path), }
 }
 
 ///|
-pub extend HranaBatch with @json.FromJson::{from_json}
-
-///|
-pub impl @json.FromJson for HranaBatchStep with fn from_json(
+impl @json.FromJson for HranaBatchStep with fn from_json(
   json : @json.Json,
   path : @json.JsonPath,
 ) -> HranaBatchStep raise @json.JsonDecodeError {
@@ -192,10 +171,7 @@ pub impl @json.FromJson for HranaBatchStep with fn from_json(
 }
 
 ///|
-pub extend HranaBatchStep with @json.FromJson::{from_json}
-
-///|
-pub impl @json.FromJson for PipelineCommand with fn from_json(
+impl @json.FromJson for PipelineCommand with fn from_json(
   json : @json.Json,
   path : @json.JsonPath,
 ) -> PipelineCommand raise @json.JsonDecodeError {
@@ -210,10 +186,7 @@ pub impl @json.FromJson for PipelineCommand with fn from_json(
 }
 
 ///|
-pub extend PipelineCommand with @json.FromJson::{from_json}
-
-///|
-pub impl @json.FromJson for HranaBatchCondition with fn from_json(
+impl @json.FromJson for HranaBatchCondition with fn from_json(
   json : @json.Json,
   path : @json.JsonPath,
 ) -> HranaBatchCondition raise @json.JsonDecodeError {
@@ -231,10 +204,7 @@ pub impl @json.FromJson for HranaBatchCondition with fn from_json(
 }
 
 ///|
-pub extend HranaBatchCondition with @json.FromJson::{from_json}
-
-///|
-pub impl @json.FromJson for HranaValue with fn from_json(
+impl @json.FromJson for HranaValue with fn from_json(
   json : @json.Json,
   path : @json.JsonPath,
 ) -> HranaValue raise @json.JsonDecodeError {
@@ -268,10 +238,7 @@ pub impl @json.FromJson for HranaValue with fn from_json(
 }
 
 ///|
-pub extend HranaValue with @json.FromJson::{from_json}
-
-///|
-pub impl @json.ToJson for HranaValue with fn to_json(self : HranaValue) {
+impl @json.ToJson for HranaValue with fn to_json(self : HranaValue) {
   match self {
     Null => @json.Json::object({ "type": @json.Json::string("null") })
     Integer(value) =>
@@ -300,6 +267,3 @@ pub impl @json.ToJson for HranaValue with fn to_json(self : HranaValue) {
       })
   }
 }
-
-///|
-pub extend HranaValue with @json.ToJson::{to_json}

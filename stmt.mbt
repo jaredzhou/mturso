@@ -55,7 +55,24 @@ pub fn Connection::exec_params(
   check_error()
   defer @ffi.stmt_deinit(stmt)
   bind_params(stmt, params)
-  let changes = @ffi.conn_exec_stmt(self.raw, stmt)
+  let changes = @ffi.conn_execute_stmt(self.raw, stmt)
+  check_error()
+  changes
+}
+
+///|
+/// Execute one statement with dynamically decoded values and discard any rows.
+pub fn Connection::exec_values(
+  self : Connection,
+  sql : String,
+  params : Array[@value.Value],
+) -> Int64 raise TursoError {
+  self.ensure_open()
+  let stmt = @ffi.conn_prepare(self.raw, @utf8.encode(sql))
+  check_error()
+  defer @ffi.stmt_deinit(stmt)
+  bind_values(stmt, params)
+  let changes = @ffi.conn_execute_stmt(self.raw, stmt)
   check_error()
   changes
 }

@@ -305,13 +305,3 @@ pub async fn NativeSyncState::pull(
     body: output.to_bytes(),
   }
 }
-
-///|
-/// Compatibility helper for callers that do not own a shared router state.
-pub async fn process_pull_updates_request(
-  db : @mturso.Database,
-  database_path : String,
-  body : Bytes,
-) -> NativeBinaryHttpResponse {
-  NativeSyncState::new(db, database_path).pull(body)
-}

@@ -150,7 +150,7 @@ void mturso_stmt_bind_blob(mturso_stmt_t *stmt, int32_t pos,
 }
 
 MOONBIT_FFI_EXPORT
-int64_t mturso_conn_exec_stmt(mturso_conn_t *conn, mturso_stmt_t *stmt) {
+int64_t mturso_conn_execute_stmt(mturso_conn_t *conn, mturso_stmt_t *stmt) {
   mturso_clear_err();
   if (mturso_conn_raw(conn) == NULL) {
     mturso_set_err("connection is not open");
@@ -161,13 +161,14 @@ int64_t mturso_conn_exec_stmt(mturso_conn_t *conn, mturso_stmt_t *stmt) {
     return -1;
   }
 
+  uint64_t changes = 0;
   const char *err = NULL;
-  int kind = MTURSO_ERR_NONE;
-  if (mturso_step_to_done(stmt->stmt, &err, &kind) != 0) {
-    mturso_set_err_kind(err, kind);
+  turso_status_code_t status = turso_statement_execute(stmt->stmt, &changes, &err);
+  if (status != TURSO_DONE) {
+    mturso_set_err_kind(err, mturso_kind_from_status(status));
     return -1;
   }
-  return turso_statement_n_change(stmt->stmt);
+  return (int64_t)changes;
 }
 
 MOONBIT_FFI_EXPORT

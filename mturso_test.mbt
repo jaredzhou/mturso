@@ -613,6 +613,16 @@ async test "execute 支持多语句：逐条执行、累计影响行数" {
 }
 
 ///|
+async test "execute 在同一脚本中执行 DDL 和写入" {
+  let db = @mturso.Database::open(":memory:")
+  defer db.close()
+  let result = db.execute("create table t(x integer); insert into t values (1), (2)")
+  assert_true(result.affected_rows() == 2)
+  let n : Int64 = db.query_one("select count(*) from t").get(0)
+  assert_true(n == 2L)
+}
+
+///|
 async test "UTF-16 String ↔ UTF-8 TEXT：中文/emoji 往返" {
   let db = @mturso.Database::open(":memory:")
   defer db.close()

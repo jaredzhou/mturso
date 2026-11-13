@@ -45,7 +45,7 @@ fi
 
 (
   cd "$root/tursogo"
-  if ! MTURSO_SYNC_URL="http://$address" go test ./...; then
+  if ! MTURSO_SYNC_URL="http://$address" go test -count=1 ./...; then
     echo "native server log:" >&2
     cat "$log" >&2
     exit 1

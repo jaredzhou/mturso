@@ -24,7 +24,7 @@ async fn main {
 
 ## Features
 
-- **Query APIs with explicit result shapes** — `query` returns a pull-based `Rows` reader for row-by-row iteration; `query_one` returns exactly one `Row` (or `NoRows`); both expose columns through the `FromValue` decoding contract. `fetch` and `fetch_one` build on the same model, collecting rows into `Array[T]` or one `T` through `FromRow`. `execute` is the DDL/DML entry point and returns `ExecResult` with affected rows. The call site always says whether you want a stream, one row, a typed collection, or only execution status.
+- **Query APIs with explicit result shapes** — `query` returns a pull-based `Rows` reader for row-by-row iteration; `query_one` returns exactly one `Row` (or `NoRows`); both expose columns through the `FromValue` decoding contract. `fetch` and `fetch_one` build on the same model, collecting rows into `Array[T]` or one `T` through `FromRow`. `execute` is the DDL/DML entry point, uses Turso's dedicated execute ABI, and returns `ExecResult` with affected rows. The call site always says whether you want a stream, one row, a typed collection, or only execution status.
 - **Bind values safely with `ToValue`** — pass `params=[...]` and let `ToValue` encode integers, floats, strings, blobs, options, JSON, timestamps and tuples; `FromValue` / `FromRow` decode them back. No SQL string building.
 - **Built-in connection pool** — `Database` is the pool: `max_conns` caps concurrency, `db.query` / `db.execute` borrow a connection automatically, `db.connect()` checks one out explicitly, and `db.stats()` shows contention.
 - **First-class transactions** — `begin_tx` / `commit` / `rollback`, with `Deferred`, `Immediate`, `Exclusive`, and Turso's `BEGIN CONCURRENT`; `begin_func` commits on success and rolls back on error.
@@ -339,7 +339,6 @@ async fn demo(conn : @mturso.Connection) -> Unit raise @mturso.TursoError {
 
 ## Known limitations
 
-- **Multi-statement `execute` (DML)** — `query` rejects multi-statement SQL; `execute` runs multiple DML statements in order. A script that mixes DDL and a later write in one call can trip an engine bug (a `btree` panic), so run DDL as its own `execute`.
 - **No cancellation or timeouts** — once submitted, a statement runs to completion (Turso's C ABI has no cross-thread cancel).
 - **Platform boundaries** — native Linux, macOS arm64, and Windows x64 are supported. Windows ARM64 and WebAssembly browser integration are not.
 - **Sync scope** — the first sync release supports one remote database and full bootstrap. Partial sync, namespace routing, remote encryption, and multi-database `--sync-dir` are not exposed yet. Sync databases require an explicit `checkpoint()`.

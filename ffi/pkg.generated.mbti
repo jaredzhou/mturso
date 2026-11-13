@@ -10,7 +10,7 @@ pub fn conn_close(Conn) -> Unit
 
 pub fn conn_exec(Conn, Bytes) -> Int64
 
-pub fn conn_exec_stmt(Conn, Stmt) -> Int64
+pub fn conn_execute_stmt(Conn, Stmt) -> Int64
 
 pub fn conn_get_autocommit(Conn) -> Int
 

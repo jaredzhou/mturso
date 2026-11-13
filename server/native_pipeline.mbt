@@ -36,11 +36,6 @@ fn error_object(code : String, message : String) -> @json.Json {
 }
 
 ///|
-fn sqlite_error_object(code : String, message : String) -> @json.Json {
-  error_object(code, message)
-}
-
-///|
 fn query_error_object(message : String) -> @json.Json {
   let code = if message.contains("constraint failed") {
     "SQLITE_CONSTRAINT"
@@ -51,7 +46,7 @@ fn query_error_object(message : String) -> @json.Json {
   } else {
     "SQLITE_ERROR"
   }
-  sqlite_error_object(code, message)
+  error_object(code, message)
 }
 
 ///|
@@ -119,7 +114,7 @@ fn decode_args(stmt : HranaStmt) -> Array[@mturso.Value] raise {
       },
     )
   }
-  if stmt.named_args is Some(named) && !named.is_empty() {
+  if stmt.named_args_present {
     raise Failure::Failure("named_args are not supported")
   }
   values
@@ -138,6 +133,23 @@ async fn execute_statement(
   let want_rows = match stmt.want_rows {
     Some(value) => value
     None => true
+  }
+  if !want_rows {
+    let affected = conn.exec_values(sql, args)
+    let last_rowid = if affected > 0L {
+      @json.Json::string(conn.last_insert_rowid().to_string())
+    } else {
+      @json.Json::null()
+    }
+    return object([
+      ("cols", @json.Json::array([])),
+      ("rows", @json.Json::array([])),
+      ("affected_row_count", @json.Json::number(affected.to_double())),
+      ("last_insert_rowid", last_rowid),
+      ("rows_read", @json.Json::number(0)),
+      ("rows_written", @json.Json::number(affected.to_double())),
+      ("query_duration_ms", @json.Json::number(0)),
+    ])
   }
   let rows = conn.query_values(sql, args)
   defer rows.close()
@@ -255,13 +267,13 @@ async fn execute_batch(
             @mturso.TursoError::QueryError(message) =>
               query_error_object(message)
             @mturso.TursoError::Busy(message) =>
-              sqlite_error_object("SQLITE_BUSY", message)
+              error_object("SQLITE_BUSY", message)
             @mturso.TursoError::Conflict(message) =>
-              sqlite_error_object("SQLITE_BUSY_SNAPSHOT", message)
+              error_object("SQLITE_BUSY_SNAPSHOT", message)
             @mturso.TursoError::ConnectionError(message) =>
-              sqlite_error_object("SQLITE_CANTOPEN", message)
+              error_object("SQLITE_CANTOPEN", message)
             @mturso.TursoError::SyncError(_, message) =>
-              sqlite_error_object("SQLITE_ERROR", message)
+              error_object("SQLITE_ERROR", message)
             _ => error_object("BATCH_STEP_ERROR", @debug.to_string(error))
           },
         )
@@ -290,13 +302,13 @@ async fn process_request(
               @mturso.TursoError::QueryError(message) =>
                 query_error_object(message)
               @mturso.TursoError::Busy(message) =>
-                sqlite_error_object("SQLITE_BUSY", message)
+                error_object("SQLITE_BUSY", message)
               @mturso.TursoError::Conflict(message) =>
-                sqlite_error_object("SQLITE_BUSY_SNAPSHOT", message)
+                error_object("SQLITE_BUSY_SNAPSHOT", message)
               @mturso.TursoError::ConnectionError(message) =>
-                sqlite_error_object("SQLITE_CANTOPEN", message)
+                error_object("SQLITE_CANTOPEN", message)
               @mturso.TursoError::SyncError(_, message) =>
-                sqlite_error_object("SQLITE_ERROR", message)
+                error_object("SQLITE_ERROR", message)
               _ => error_object("EXECUTE_ERROR", @debug.to_string(error))
             },
           )

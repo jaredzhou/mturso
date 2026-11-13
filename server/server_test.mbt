@@ -348,7 +348,7 @@ async test "native pull updates rejects a truncated protobuf request" {
   let path = dir + "/remote.db"
   let db = @mturso.Database::open(path)
   defer db.close()
-  let response = @server.process_pull_updates_request(db, path, b"\x12\x05x")
+  let response = @server.NativeSyncState::new(db, path).pull(b"\x12\x05x")
   assert_true(response.status == 400)
   assert_true(
     @utf8.decode_lossy(response.body).contains("invalid pull-updates request"),

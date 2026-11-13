@@ -126,6 +126,7 @@ static int try_load(const char *path) {
   RESOLVE(turso_statement_row_value_double);
   RESOLVE(turso_statement_row_value_bytes_ptr);
   RESOLVE(turso_statement_row_value_bytes_count);
+  RESOLVE(turso_statement_execute);
   RESOLVE(turso_statement_step);
   RESOLVE(turso_statement_run_io);
   RESOLVE(turso_statement_deinit);

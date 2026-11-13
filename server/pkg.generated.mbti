@@ -11,73 +11,14 @@ pub async fn process_cursor_request(@mturso.Database, CursorRequest) -> NativeHt
 
 pub async fn process_pipeline_request(@mturso.Database, PipelineRequest) -> NativeHttpResponse
 
-pub async fn process_pull_updates_request(@mturso.Database, String, Bytes) -> NativeBinaryHttpResponse
-
 // Errors
 
 // Types and methods
-pub(all) struct CursorRequest {
-  baton : String?
-  batch : HranaBatch
+pub struct CursorRequest {
+  // private fields
 }
 pub fn CursorRequest::from_json(@json.Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
 pub impl @json.FromJson for CursorRequest
-
-pub(all) struct HranaBatch {
-  steps : Array[HranaBatchStep]
-  replication_index : Int64?
-}
-pub fn HranaBatch::from_json(@json.Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
-pub impl @json.FromJson for HranaBatch
-
-pub(all) enum HranaBatchCondition {
-  Ok(Int)
-  Error(Int)
-  Not(HranaBatchCondition)
-  And(Array[HranaBatchCondition])
-  Or(Array[HranaBatchCondition])
-  IsAutocommit
-  Unknown(String)
-}
-pub fn HranaBatchCondition::from_json(@json.Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
-pub impl @json.FromJson for HranaBatchCondition
-
-pub(all) struct HranaBatchStep {
-  condition : HranaBatchCondition?
-  stmt : HranaStmt
-}
-pub fn HranaBatchStep::from_json(@json.Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
-pub impl @json.FromJson for HranaBatchStep
-
-#derive(@json.FromJson)
-pub(all) struct HranaNamedArg {
-  name : String
-  value : HranaValue
-}
-pub fn HranaNamedArg::from_json(@json.Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
-
-pub(all) struct HranaStmt {
-  sql : String?
-  sql_id : Int?
-  args : Array[HranaValue]?
-  named_args : Array[HranaNamedArg]?
-  want_rows : Bool?
-  replication_index : Int64?
-}
-pub fn HranaStmt::from_json(@json.Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
-pub impl @json.FromJson for HranaStmt
-
-pub(all) enum HranaValue {
-  Null
-  Integer(Int64)
-  Real(Double)
-  Text(String)
-  Blob(Bytes)
-}
-pub fn HranaValue::from_json(@json.Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
-pub fn HranaValue::to_json(Self) -> @json.Json
-pub impl @json.FromJson for HranaValue
-pub impl @json.ToJson for HranaValue
 
 pub(all) struct NativeBinaryHttpResponse {
   status : Int
@@ -97,18 +38,8 @@ pub struct NativeSyncState {
 pub fn NativeSyncState::new(@mturso.Database, String) -> Self
 pub async fn NativeSyncState::pull(Self, Bytes) -> NativeBinaryHttpResponse
 
-pub(all) enum PipelineCommand {
-  Execute(HranaStmt)
-  Batch(HranaBatch)
-  Close
-  Unknown(String)
-}
-pub fn PipelineCommand::from_json(@json.Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
-pub impl @json.FromJson for PipelineCommand
-
-pub(all) struct PipelineRequest {
-  baton : String?
-  requests : Array[PipelineCommand]
+pub struct PipelineRequest {
+  // private fields
 }
 pub fn PipelineRequest::from_json(@json.Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
 pub impl @json.FromJson for PipelineRequest
