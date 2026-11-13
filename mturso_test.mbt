@@ -632,6 +632,7 @@ async test "#6 retry_tx 在真实 MVCC 冲突后重试成功" {
   ignore(tx1.execute("update t set v = 1 where id = 1"))
   let attempts : Ref[Int] = { val: 0, }
   let first_conflict : Ref[Bool] = { val: false, }
+  let released : Ref[Bool] = { val: false, }
   let done : Ref[Bool] = { val: false, }
 
   @async.with_task_group(group => {
@@ -641,10 +642,17 @@ async test "#6 retry_tx 在真实 MVCC 冲突后重试成功" {
           c2,
           async fn(tx) -> Unit raise @mturso.TursoError {
             attempts.val = attempts.val + 1
-            errdefer {
-              first_conflict.val = true
+            if attempts.val == 1 {
+              errdefer {
+                first_conflict.val = true
+              }
+              ignore(tx.execute("update t set v = 2 where id = 1"))
+            } else {
+              while !released.val {
+                @async.sleep(1)
+              }
+              ignore(tx.execute("update t set v = 2 where id = 1"))
             }
-            ignore(tx.execute("update t set v = 2 where id = 1"))
           },
           opts=@mturso.RetryOptions::{
             attempts: 10,
@@ -660,6 +668,7 @@ async test "#6 retry_tx 在真实 MVCC 冲突后重试成功" {
       @async.sleep(1)
     }
     tx1.commit()
+    released.val = true
   })
 
   assert_true(done.val)
