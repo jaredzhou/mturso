@@ -1,6 +1,6 @@
 # syncdb 设计与实现规划
 
-状态：外部 server 的客户端主路径已实现（bootstrap / push / pull / checkpoint / stats，tickets #14-#17）；自研 server 已提供 `/v2|v3/pipeline`、`/v3/cursor` 和官方 Go SDK 兼容的 SQL pipeline（ticket #19），同步协议的 bootstrap / pull / push 仍待实现。Turso 版本基线为 **v0.8.2**。
+状态：外部 server 的客户端主路径已实现（bootstrap / push / pull / checkpoint / stats，tickets #14-#17）；自研 server 已提供 `/v2|v3/pipeline`、`/v3/cursor`、页面 bootstrap 和持久化增量 pull（tickets #19-#21），push 与公网安全模式仍待实现。Turso 版本基线为 **v0.8.2**。
 
 ## 目标
 

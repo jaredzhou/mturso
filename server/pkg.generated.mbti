@@ -27,6 +27,12 @@ pub(all) struct NativeHttpResponse {
   body : String
 }
 
+pub struct NativeSyncState {
+  // private fields
+}
+pub fn NativeSyncState::new(@mturso.Database, String) -> Self
+pub async fn NativeSyncState::pull(Self, Bytes) -> NativeBinaryHttpResponse
+
 pub struct SyncServer {
   // private fields
 }

@@ -30,8 +30,7 @@ async fn handle_cursor(db : @mturso.Database, ctx : @pony.Context) -> Unit {
 
 ///|
 async fn handle_pull_updates(
-  db : @mturso.Database,
-  database_path : String,
+  state : @srv.NativeSyncState,
   ctx : @pony.Context,
 ) -> Unit {
   let body = try ctx.req_body.read_all() catch {
@@ -42,7 +41,7 @@ async fn handle_pull_updates(
   } noraise {
     value => value
   }
-  let response = @srv.process_pull_updates_request(db, database_path, body)
+  let response = state.pull(body)
   ctx.set_content_type(response.content_type)
   ctx.write_bytes(response.status, response.body)
 }
@@ -50,15 +49,13 @@ async fn handle_pull_updates(
 ///|
 fn build_router(
   db : @mturso.Database,
-  database_path : String,
+  state : @srv.NativeSyncState,
 ) -> @pony.Router raise @pony.RouterError {
   let router = @pony.Router::Router()
   router.post("/v2/pipeline", ctx => handle_pipeline(db, ctx))
   router.post("/v3/pipeline", ctx => handle_pipeline(db, ctx))
   router.post("/v3/cursor", ctx => handle_cursor(db, ctx))
-  router.post("/pull-updates", ctx => {
-    handle_pull_updates(db, database_path, ctx)
-  })
+  router.post("/pull-updates", ctx => handle_pull_updates(state, ctx))
   router.options("/*", ctx => ctx.no_content())
   router.set_not_found(ctx => ctx.write_json(404, Map([("error", "Not Found")])))
   router
@@ -79,7 +76,8 @@ async fn run_native_server(database_path : String, address : String) -> Unit {
     value => value
   }
   defer db.close()
-  let router = try build_router(db, database_path) catch {
+  let state = @srv.NativeSyncState::new(db, database_path)
+  let router = try build_router(db, state) catch {
     error => {
       println("failed to build router: \{error}")
       @env.exit(1)

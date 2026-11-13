@@ -25,6 +25,9 @@ const APPLY_REPLACE_BASE : UInt32 = 1
 const PROTOCOL_PAGES : UInt32 = 1
 
 ///|
+const PROTOCOL_MVCC_LOGICAL : UInt32 = 2
+
+///|
 /// Binary response used by `/pull-updates`.
 pub(all) struct NativeBinaryHttpResponse {
   status : Int
@@ -37,6 +40,7 @@ priv struct PullUpdatesRequest {
   mut encoding : UInt32
   mut stream_kind : UInt32
   mut client_revision : String
+  mut long_poll_timeout_ms : UInt32
   mut server_pages_selector : Bytes
   mut server_query_selector : String
 }
@@ -47,6 +51,7 @@ impl Default for PullUpdatesRequest with fn default() -> PullUpdatesRequest {
     encoding: PAGE_ENCODING_RAW,
     stream_kind: PULL_PAGES,
     client_revision: "",
+    long_poll_timeout_ms: 0U,
     server_pages_selector: b"",
     server_query_selector: "",
   }
@@ -63,7 +68,8 @@ impl @protobuf.Read for PullUpdatesRequest with fn read_with_limit(
       (1, _) => request.encoding = (reader |> @protobuf.read_enum()).0
       (2, _) => reader |> @protobuf.read_string() |> ignore
       (3, _) => request.client_revision = reader |> @protobuf.read_string()
-      (4, _) => reader |> @protobuf.read_uint32() |> ignore
+      (4, _) =>
+        request.long_poll_timeout_ms = reader |> @protobuf.read_uint32()
       (5, _) => request.server_pages_selector = reader |> @protobuf.read_bytes()
       (6, _) => reader |> @protobuf.read_bytes() |> ignore
       (7, _) =>
@@ -161,33 +167,12 @@ fn[M : @protobuf.Write] write_framed(
 }
 
 ///|
-fn page_revision(contents : Bytes) -> String {
-  let mut hash = 14695981039346656037UL
-  for byte in contents {
-    hash = (hash ^ byte.to_uint64()) * 1099511628211UL
-  }
-  "page-v1:\{contents.length()}:\{hash}"
-}
-
-///|
-async fn checkpoint_database(db : @mturso.Database) -> Unit {
-  let conn = db.connect()
-  defer conn.close()
-  let rows = conn.query("pragma wal_checkpoint(truncate)")
-  defer rows.close()
-  while rows.has_next() {
-    ignore(rows.get_row())
-  }
-}
-
-///|
-/// Handle one v0.8.2 `/pull-updates` request with a durable full-page snapshot.
-pub async fn process_pull_updates_request(
-  db : @mturso.Database,
-  database_path : String,
+/// Handle one v0.8.2 `/pull-updates` request on a shared revision journal.
+pub async fn NativeSyncState::pull(
+  self : NativeSyncState,
   body : Bytes,
 ) -> NativeBinaryHttpResponse {
-  if database_path == ":memory:" {
+  if self.database_path == ":memory:" {
     return pull_updates_error(
       400, "pull-updates requires a file-backed database",
     )
@@ -208,15 +193,12 @@ pub async fn process_pull_updates_request(
     return pull_updates_error(400, "unknown page encoding: \{request.encoding}")
   }
   if request.stream_kind != PULL_PAGES {
-    if request.stream_kind == PULL_MVCC_LOGICAL_LOG {
+    if request.stream_kind != PULL_MVCC_LOGICAL_LOG {
       return pull_updates_error(
-        501, "MVCC logical-log pull is not implemented by the native server",
+        400,
+        "unknown pull-updates stream kind: \{request.stream_kind}",
       )
     }
-    return pull_updates_error(
-      400,
-      "unknown pull-updates stream kind: \{request.stream_kind}",
-    )
   }
   if request.server_pages_selector.length() != 0 ||
     request.server_query_selector != "" {
@@ -224,46 +206,92 @@ pub async fn process_pull_updates_request(
       501, "partial page selectors are not implemented by the native server",
     )
   }
-  try checkpoint_database(db) catch {
-    error =>
-      return pull_updates_error(
-        500,
-        "failed to checkpoint database for pull-updates: \{error}",
-      )
-  } noraise {
-    _ => ()
-  }
-  let contents = try @fs.read_binary(database_path) catch {
-    error =>
-      return pull_updates_error(
-        500,
-        "failed to read database snapshot: \{error}",
-      )
+  let selection = try parse_client_revision(request.client_revision) catch {
+    error => return pull_updates_error(400, "\{error}")
   } noraise {
     value => value
   }
-  if contents.length() % SYNC_PAGE_SIZE != 0 {
-    return pull_updates_error(
-      500,
-      "database size \{contents.length()} is not a multiple of \{SYNC_PAGE_SIZE}",
-    )
+  self.operation_lock.acquire()
+  defer self.operation_lock.release()
+  let mut current = try self.current_snapshot() catch {
+    error => return pull_updates_error(500, "\{error}")
+  } noraise {
+    value => value
   }
-  let page_count = contents.length() / SYNC_PAGE_SIZE
-  let revision = page_revision(contents)
-  let unchanged = request.client_revision == revision
+  match selection {
+    Since(revision) =>
+      if revision > current.revision {
+        return pull_updates_error(
+          400,
+          "pull-updates client revision is from the future: \{request.client_revision}",
+        )
+      } else if revision == current.revision {
+        let timeout = if request.long_poll_timeout_ms >
+          MAX_SYNC_LONG_POLL_MS.reinterpret_as_uint() {
+          MAX_SYNC_LONG_POLL_MS
+        } else {
+          request.long_poll_timeout_ms.reinterpret_as_int()
+        }
+        let deadline = @async.now() + timeout.to_int64()
+        while @async.now() < deadline {
+          let remaining = deadline - @async.now()
+          let delay = if remaining < SYNC_LONG_POLL_INTERVAL_MS.to_int64() {
+            remaining.to_int()
+          } else {
+            SYNC_LONG_POLL_INTERVAL_MS
+          }
+          if delay > 0 {
+            @async.sleep(delay)
+          }
+          current = try self.current_snapshot() catch {
+            error => return pull_updates_error(500, "\{error}")
+          } noraise {
+            value => value
+          }
+          if current.revision != revision {
+            break
+          }
+        }
+      }
+    FullBase => ()
+  }
+  let pages = try (
+    match selection {
+      FullBase => all_pages(current.contents)
+      Since(revision) =>
+        if revision >= current.revision {
+          []
+        } else {
+          self.pages_since(revision, current.revision, current.page_count)
+        }
+    }
+  ) catch {
+    error => return pull_updates_error(400, "\{error}")
+  } noraise {
+    value => value
+  }
+  let apply_mode = match selection {
+    FullBase => APPLY_REPLACE_BASE
+    Since(_) => APPLY_INCREMENTAL
+  }
+  let protocol = if request.stream_kind == PULL_MVCC_LOGICAL_LOG {
+    PROTOCOL_MVCC_LOGICAL
+  } else {
+    PROTOCOL_PAGES
+  }
   let header : PullUpdatesResponseHeader = {
-    server_revision: revision,
-    db_size: page_count.to_uint64(),
+    server_revision: sync_revision(current.revision),
+    db_size: current.page_count.to_uint64(),
     raw_encoding: true,
     stream_kind: PULL_PAGES,
-    apply_mode: if unchanged {
-      APPLY_INCREMENTAL
-    } else {
-      APPLY_REPLACE_BASE
-    },
-    protocol: PROTOCOL_PAGES,
+    apply_mode,
+    protocol,
   }
-  let output = Buffer(size_hint=contents.length() + page_count * 32)
+  let mut payload_bytes = 0
+  for entry in pages {
+    payload_bytes = payload_bytes + entry.1.length()
+  }
+  let output = Buffer(size_hint=pages.length() * 32 + payload_bytes)
   try write_framed(output, header) catch {
     error =>
       return pull_updates_error(
@@ -273,16 +301,8 @@ pub async fn process_pull_updates_request(
   } noraise {
     _ => ()
   }
-  if unchanged {
-    return {
-      status: 200,
-      content_type: "application/protobuf",
-      body: output.to_bytes(),
-    }
-  }
-  for page_id in 0..<page_count {
-    let start = page_id * SYNC_PAGE_SIZE
-    let page = @buffer.from_bytes(contents[start:start + SYNC_PAGE_SIZE]).to_bytes()
+  for entry in pages {
+    let (page_id, page) = entry
     let data : PageData = { page_id: page_id.to_uint64(), encoded_page: page, }
     try write_framed(output, data) catch {
       error =>
@@ -299,4 +319,14 @@ pub async fn process_pull_updates_request(
     content_type: "application/protobuf",
     body: output.to_bytes(),
   }
+}
+
+///|
+/// Compatibility helper for callers that do not own a shared router state.
+pub async fn process_pull_updates_request(
+  db : @mturso.Database,
+  database_path : String,
+  body : Bytes,
+) -> NativeBinaryHttpResponse {
+  NativeSyncState::new(db, database_path).pull(body)
 }

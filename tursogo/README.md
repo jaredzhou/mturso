@@ -34,7 +34,8 @@ endpoint, and `QueryRowContext(...).Scan`.
 
 `sync_test.go` uses the embedded official `turso.tech/database/tursogo` client
 against the native server's `/pull-updates` endpoint. It verifies page
-bootstrap, local queries, an unchanged empty pull, and sync stats.
+bootstrap, repeated incremental pulls, merging multiple missed revisions,
+empty long-poll behavior, the MVCC page fallback, local queries, and sync stats.
 
 Run it with the repository helper, which starts and stops the native server:
 

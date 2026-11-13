@@ -468,10 +468,12 @@ revision 对 client 是不透明字符串，不能解析后做业务判断。[�
 |---|---|---|
 | 空 client，两个 revision 都空 | 返回最新 header 和所需页面 | checkpoint 后返回完整 ReplaceBase 快照 |
 | client revision 等于 server revision | 返回空增量 header，无 PageData | 返回空 Incremental header，无 PageData |
-| client revision 落后 | 从 WAL 选每个 page 的最新 frame | revision 不同则重新发送完整 ReplaceBase 快照 |
+| client revision 落后 | 从 WAL 选每个 page 的最新 frame | 从持久化页面 delta 日志合并缺失 revision，只发送每个页面的最终版本 |
 
-mturso 的行为对 bootstrap 正确，但不是增量算法；增量 pull 仍由 ticket
-#21 实现。[实测 + 源码证据]
+mturso 通过 checkpoint 后的整库快照检测变化，并把变化的 4096-byte 页面
+写入 `.mturso-sync/revisions/<n>.delta`。这不需要 C ABI 暴露 WAL frame，
+但每次检测仍需读取并 checkpoint 整库；它是正确的 page 增量传输，不是
+WAL 级扫描优化。[实测 + 源码证据]
 
 ### Selectors 和 long poll
 
@@ -528,6 +530,7 @@ range、CRC seed、log header 和事务 frame 格式解码。mturso native serve
 实现位置：
 
 - [`server/sync_protocol.mbt`](../server/sync_protocol.mbt)
+- [`server/sync_state.mbt`](../server/sync_state.mbt)
 - [`server/native_pipeline.mbt`](../server/native_pipeline.mbt)
 - [`cmd/server/native.mbt`](../cmd/server/native.mbt)
 
@@ -538,7 +541,7 @@ range、CRC seed、log header 和事务 frame 格式解码。mturso native serve
 | `/v2/pipeline` | 已实现 execute、batch、close |
 | `/v3/pipeline` | 与 v2 共用实现 |
 | `/v3/cursor` | 已实现 NDJSON step/row/step_error 输出 |
-| `/pull-updates` | 已实现 raw page bootstrap 子集 |
+| `/pull-updates` | 已实现 raw page bootstrap、增量 pull、long poll 和 MVCC page fallback |
 
 Pipeline 当前支持：
 
@@ -559,16 +562,21 @@ Pipeline 当前支持：
 
 - v0.8.2 官方 Go sync client 和 MoonBit sync client 的页面 bootstrap；
 - file-backed database；
-- checkpoint 后读取完整数据库文件；
-- 稳定内容 revision；
+- checkpoint 后检测数据库变化；
+- 持久化单调 revision（`g1:r<n>`）；
+- 持久化 baseline 和按 revision 的页面 delta；
 - `raw` encoding、`pages` stream、`ReplaceBase` 首次快照；
-- 相同 revision 返回空 `Incremental` header；
-- server 重启后的重新 bootstrap。
+- client 落后多个 revision 时只发送每个变化页面的最终版本；
+- 相同 revision 按 `long_poll_timeout_ms` 等待并返回空 `Incremental` response；
+- MVCC logical 请求的 page fallback；
+- server 重启后保留 revision、baseline 和增量历史。
 
 当前明确不支持：
 
 - Zstd page encoding：HTTP `400`；
-- MVCC logical-log：HTTP `501`；
+- 真正的 MVCC logical-log body：未实现；当前返回兼容的 page fallback；
+- 非法 revision、未知 generation、future revision：HTTP `400`；
+- 缺失（过期）revision delta：HTTP `400`；
 - 未知 stream kind：HTTP `400`；
 - partial page/query selector：HTTP `501`；
 - 截断 protobuf：HTTP `400`；
@@ -576,7 +584,6 @@ Pipeline 当前支持：
 
 对应的下一批实现：
 
-- [#21](https://github.com/jaredzhou/mturso/issues/21)：增量 pull。
 - [#22](https://github.com/jaredzhou/mturso/issues/22)：push。
 - [#23](https://github.com/jaredzhou/mturso/issues/23)：HTTPS 和鉴权的公网模式。
 
@@ -588,8 +595,8 @@ Pipeline 当前支持：
 | `/v2/pipeline` | 有 | 有 | 有 |
 | `/v3/pipeline` | 源码规范为主 | 无 | 有，功能子集 |
 | `/v3/cursor` | 源码规范 | 无 | 有，功能子集 |
-| `/pull-updates` page stream | 无完整 wire docs | 有 | bootstrap 子集 |
-| `/pull-updates` MVCC logical | 无完整 wire docs | 有 | 无 |
+| `/pull-updates` page stream | 无完整 wire docs | 有 | bootstrap + 页面增量 |
+| `/pull-updates` MVCC logical | 无完整 wire docs | 有 | page fallback |
 | partial page selector | 无完整 wire docs | 有 | 无 |
 | `/db/{name}/...` | 公开 docs 未详述 | 有 | 无 |
 

@@ -11,6 +11,7 @@ target/
 *.db-log
 *.db-wal
 *.db-journal
+*.mturso-sync/
 
 # RAG 资源缓存（模型与原生库，体积大，用脚本重新拉）
 .cache/

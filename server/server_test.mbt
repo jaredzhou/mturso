@@ -297,6 +297,48 @@ async test "native sync server bootstraps a file-backed database" {
   assert_true(bodies.length() == 2)
   assert_true(bodies[0] == "alpha")
   assert_true(bodies[1] == "beta")
+
+  let update_request =
+    #|{"baton":null,"requests":[{"type":"execute","stmt":{"sql":"update notes set body = 'beta-updated' where id = 2"}}]}
+  let (update_status, update_body) = post_pipeline(
+    server.base_url(),
+    update_request,
+  )
+  assert_true(update_status == 200)
+  assert_true(!update_body.contains("\"type\":\"error\""))
+  assert_true(replica.pull())
+  let updated : Array[String] = conn.fetch(
+    "select body from notes order by id",
+  )
+  assert_true(updated.length() == 2)
+  assert_true(updated[0] == "alpha")
+  assert_true(updated[1] == "beta-updated")
+
+  let snapshot = @fs.read_binary(remote_path)
+  let delta = @fs.read_binary(remote_path + ".mturso-sync/revisions/2.delta")
+  let changed_pages = delta[8].to_uint() |
+    (delta[9].to_uint() << 8) |
+    (delta[10].to_uint() << 16) |
+    (delta[11].to_uint() << 24)
+  assert_true(changed_pages.reinterpret_as_int() < snapshot.length() / 4096)
+
+  let insert_request =
+    #|{"baton":null,"requests":[{"type":"execute","stmt":{"sql":"insert into notes(body) values ('gamma')"}}]}
+  let (insert_status, insert_body) = post_pipeline(
+    server.base_url(),
+    insert_request,
+  )
+  assert_true(insert_status == 200)
+  assert_true(!insert_body.contains("\"type\":\"error\""))
+  assert_true(replica.pull())
+  let count : Array[Int] = conn.fetch("select count(*) from notes")
+  assert_true(count.length() == 1)
+  assert_true(count[0] == 3)
+
+  let started = @async.now()
+  assert_true(!replica.pull())
+  assert_true(@async.now() - started >= 80L)
+  assert_true(@fs.read_text(remote_path + ".mturso-sync/state").trim() == "3")
 }
 
 ///|
@@ -377,4 +419,19 @@ async test "native sync server keeps bootstrap state across restart" {
   assert_true(second_rows.length() == 1)
   assert_true(second_rows[0] == "persisted")
   assert_true(second_replica.stats().revision.length() > 0)
+
+  let restart_update_request =
+    #|{"baton":null,"requests":[{"type":"execute","stmt":{"sql":"insert into notes(body) values ('after-restart')"}}]}
+  let (restart_update_status, restart_update_body) = post_pipeline(
+    second.base_url(),
+    restart_update_request,
+  )
+  assert_true(restart_update_status == 200)
+  assert_true(!restart_update_body.contains("\"type\":\"error\""))
+  assert_true(second_replica.pull())
+  let after_restart : Array[String] = second_conn.fetch(
+    "select body from notes order by id",
+  )
+  assert_true(after_restart.length() == 2)
+  assert_true(after_restart[1] == "after-restart")
 }
