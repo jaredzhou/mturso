@@ -26,6 +26,7 @@ pub impl QueryExecutor for Connection with fn execute(
   sql : String,
   params? : Array[&ToValue],
 ) -> ExecResult raise TursoError {
+  self.ensure_open()
   let data = @utf8.encode(sql)
   let mut start = 0
   let mut total = 0L

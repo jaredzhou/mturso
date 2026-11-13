@@ -39,7 +39,6 @@ pub struct Connection {
 pub fn Connection::autocommit(Self) -> Bool raise TursoError
 pub async fn Connection::begin_tx(Self, opts? : TxOptions) -> DbTx raise TursoError
 pub fn Connection::close(Self) -> Unit
-pub fn Connection::exec_blocking(Self, String) -> Int64 raise TursoError
 pub fn Connection::exec_params(Self, String, params? : Array[&ToValue]) -> Int64 raise TursoError
 pub fn Connection::exec_values(Self, String, Array[@value.Value]) -> Int64 raise TursoError
 pub async fn Connection::execute(Self, String, params? : Array[&ToValue]) -> ExecResult raise TursoError

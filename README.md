@@ -353,7 +353,7 @@ async fn demo(conn : @mturso.Connection) -> Unit raise @mturso.TursoError {
 
 ```bash
 moon check --target native      # type check
-moon test  --target native      # run the test suite (62 tests)
+moon test  --target native      # run the test suite (61 tests)
 ```
 
 Do not run a bare `moon fmt` over the sources: this toolchain respells `Int` to `Int32`. If you do, revert with `sed -i 's/Int32/Int/g'` on the touched files.

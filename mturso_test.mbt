@@ -109,17 +109,6 @@ async test "query error raises TursoError::QueryError" {
 }
 
 ///|
-async test "blocking exec works without async runtime" {
-  let db = @mturso.Database::open(":memory:")
-  defer db.close()
-  let conn = db.connect()
-  defer conn.close()
-  ignore(conn.exec_blocking("create table t(x integer)"))
-  ignore(conn.exec_blocking("insert into t values (1), (2)"))
-  assert_true(one_int(conn, "select sum(x) from t") == 3L)
-}
-
-///|
 async test "慢查询（SQL 里 sleep 2s）不阻塞另一个连接上的快查询" {
   let db = @mturso.Database::open(":memory:")
   defer db.close()
@@ -165,12 +154,12 @@ async test "类型化行集：整数/浮点/文本/blob/null 按类型取到，�
   let conn = db.connect()
   defer conn.close()
   ignore(
-    conn.exec_blocking(
+    conn.execute(
       "create table t(i integer, r real, s text, b blob, n integer)",
     ),
   )
   ignore(
-    conn.exec_blocking(
+    conn.execute(
       "insert into t values (42, 1.5, 'hi', x'0102', null)",
     ),
   )
@@ -211,8 +200,8 @@ async test "参数化查询：query(sql, params) 走 MoonBit 侧 prepare+bind" {
   defer db.close()
   let conn = db.connect()
   defer conn.close()
-  ignore(conn.exec_blocking("create table t(a integer, b text)"))
-  ignore(conn.exec_blocking("insert into t values (1, 'x'), (2, 'y')"))
+  ignore(conn.execute("create table t(a integer, b text)"))
+  ignore(conn.execute("insert into t values (1, 'x'), (2, 'y')"))
 
   let rows = conn.query("select b from t where a = ?1", params=[2])
   defer rows.close()
@@ -230,7 +219,7 @@ async test "参数绑定：单个 / 多个 / NULL，结果与字面量一致" {
   let conn = db.connect()
   defer conn.close()
   ignore(
-    conn.exec_blocking(
+    conn.execute(
       "create table t(a integer, b text, c blob, d integer, e real)",
     ),
   )
@@ -267,8 +256,8 @@ async test "fetch / fetch_one：元组建行 + NoRows" {
   defer db.close()
   let conn = db.connect()
   defer conn.close()
-  ignore(conn.exec_blocking("create table t(id integer, name text)"))
-  ignore(conn.exec_blocking("insert into t values (1, 'a'), (2, 'b')"))
+  ignore(conn.execute("create table t(id integer, name text)"))
+  ignore(conn.execute("insert into t values (1, 'a'), (2, 'b')"))
 
   let all : Array[(Int, String)] = conn.fetch("select id, name from t order by id")
   assert_true(all.length() == 2)
@@ -313,7 +302,7 @@ async test "用已关闭的连接 → TursoError::ConnectionError" {
   let db = @mturso.Database::open(":memory:")
   let conn = db.connect()
   conn.close()
-  let error = @test.expect_error(() => conn.exec_blocking("select 1"))
+  let error = @test.expect_error_async(() => conn.execute("select 1"))
   match error {
     @mturso.TursoError::ConnectionError(message) =>
       assert_eq(message, "connection is closed")
@@ -604,7 +593,7 @@ async test "UTF-16 String ↔ UTF-8 TEXT：中文/emoji 往返" {
   defer db.close()
   let conn = db.connect()
   defer conn.close()
-  ignore(conn.exec_blocking("create table t(s text)"))
+  ignore(conn.execute("create table t(s text)"))
   ignore(conn.execute("insert into t values (?1)", params=["中文🙂"]))
 
   let rows = conn.query("select s from t")
@@ -624,8 +613,8 @@ async test "value_raw：非法 UTF-8 文本宽松解码 + 原始字节" {
   defer db.close()
   let conn = db.connect()
   defer conn.close()
-  ignore(conn.exec_blocking("create table t(s text)"))
-  ignore(conn.exec_blocking("insert into t values (x'fffe')"))
+  ignore(conn.execute("create table t(s text)"))
+  ignore(conn.execute("insert into t values (x'fffe')"))
   let rows = conn.query("select s from t")
   defer rows.close()
   assert_true(rows.has_next())

@@ -51,6 +51,7 @@ pub fn Connection::exec_params(
   sql : String,
   params? : Array[&ToValue],
 ) -> Int64 raise TursoError {
+  self.ensure_open()
   let stmt = @ffi.conn_prepare(self.raw, @utf8.encode(sql))
   check_error()
   defer @ffi.stmt_deinit(stmt)

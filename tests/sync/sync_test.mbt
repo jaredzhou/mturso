@@ -475,7 +475,7 @@ async test "sync database close rejects new work while draining operations" {
     )
     match error {
       @mturso.TursoError::ConnectionError(message) =>
-        assert_eq(message, "connection is not open")
+        assert_eq(message, "connection is closed")
       error => fail("unexpected error: \{@debug.to_string(error)}")
     }
   })

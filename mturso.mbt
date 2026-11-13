@@ -243,18 +243,6 @@ pub async fn Connection::sqlite_version(
 }
 
 ///|
-/// 同步版 exec：在调用线程上直接跑（不需要 async 运行时）。
-pub fn Connection::exec_blocking(
-  self : Connection,
-  sql : String,
-) -> Int64 raise TursoError {
-  self.ensure_open()
-  let changes = @ffi.conn_exec(self.raw, @utf8.encode(sql))
-  check_error()
-  changes
-}
-
-///|
 /// 关闭数据库（幂等）：**级联**关掉 idle 和 busy 里的所有连接（join 各自 worker），
 /// 再 `turso_database_deinit`。
 pub fn Database::close(self : Database) -> Unit {

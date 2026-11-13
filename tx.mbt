@@ -103,7 +103,7 @@ pub impl Tx for DbTx with commit(self) -> Unit raise TursoError {
     }
   }
   if self.read_only {
-    ignore(self.conn.exec_blocking("pragma query_only=0"))
+    ignore(self.conn.execute("pragma query_only=0"))
   }
   ignore(self.conn.execute("commit"))
 }
@@ -120,7 +120,7 @@ pub impl Tx for DbTx with rollback(self) -> Unit raise TursoError {
     }
   }
   if self.read_only {
-    ignore(self.conn.exec_blocking("pragma query_only=0"))
+    ignore(self.conn.execute("pragma query_only=0"))
   }
   ignore(self.conn.execute("rollback"))
 }
@@ -160,13 +160,13 @@ async fn Connection::begin_tx_internal(
     _ => "begin"
   }
   if read_only {
-    ignore(self.exec_blocking("pragma query_only=1"))
+    ignore(self.execute("pragma query_only=1"))
   }
   errdefer {
     if read_only {
-      try ignore(self.exec_blocking("pragma query_only=0")) catch {
-        _ => ()
-      } noraise {
+      try @async.protect_from_cancel(async fn() {
+        ignore(self.execute("pragma query_only=0"))
+      }) catch {
         _ => ()
       }
     }
