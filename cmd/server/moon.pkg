@@ -9,6 +9,7 @@ import {
   "moonbitlang/core/async",
   "moonbitlang/core/debug",
   "moonbitlang/core/env",
+  "moonbitlang/core/json",
 }
 
 options(

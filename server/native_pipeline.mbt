@@ -36,6 +36,25 @@ fn error_object(code : String, message : String) -> @json.Json {
 }
 
 ///|
+fn sqlite_error_object(code : String, message : String) -> @json.Json {
+  error_object(code, message)
+}
+
+///|
+fn query_error_object(message : String) -> @json.Json {
+  let code = if message.contains("constraint failed") {
+    "SQLITE_CONSTRAINT"
+  } else if message.contains("no such table") ||
+    message.contains("Parse error") ||
+    message.contains("syntax error") {
+    "SQL_PARSE_ERROR"
+  } else {
+    "SQLITE_ERROR"
+  }
+  sqlite_error_object(code, message)
+}
+
+///|
 fn error_response(_status : Int, message : String) -> @json.Json {
   object([("error", @json.Json::string(message))])
 }
@@ -65,104 +84,42 @@ fn as_object(value : @json.Json) -> Map[String, @json.Json] raise {
 }
 
 ///|
-fn as_array(value : @json.Json) -> Array[@json.Json] raise {
-  match value {
-    @json.Json::Array(items) => items
-    _ => raise Failure::Failure("expected JSON array")
-  }
-}
-
-///|
-fn as_string(value : @json.Json) -> String raise {
-  match value {
-    @json.Json::String(value) => value
-    _ => raise Failure::Failure("expected JSON string")
-  }
-}
-
-///|
 fn field(fields : Map[String, @json.Json], name : String) -> @json.Json? {
   fields.get(name)
 }
 
 ///|
-fn decode_value(value : @json.Json) -> @mturso.Value raise {
-  let fields = as_object(value)
-  let kind = match field(fields, "type") {
-    Some(value) => as_string(value)
-    None => raise Failure::Failure("value.type is required")
-  }
-  match kind {
-    "null" => @mturso.Value::Null
-    "integer" => {
-      let raw = match field(fields, "value") {
-        Some(value) => as_string(value)
-        None => raise Failure::Failure("integer value is required")
-      }
-      @mturso.Value::Integer(@string.parse_int64(raw))
-    }
-    "float" =>
-      match field(fields, "value") {
-        Some(@json.Json::Number(value, ..)) => @mturso.Value::Real(value)
-        Some(@json.Json::Null) | None => @mturso.Value::Real(0.0 / 0.0)
-        _ => raise Failure::Failure("invalid float value")
-      }
-    "text" => {
-      let raw = match field(fields, "value") {
-        Some(value) => as_string(value)
-        None => raise Failure::Failure("text value is required")
-      }
-      @mturso.Value::Text(raw)
-    }
-    "blob" => {
-      let raw = match field(fields, "base64") {
-        Some(value) => as_string(value)
-        None => raise Failure::Failure("blob base64 is required")
-      }
-      @mturso.Value::Blob(@base64.decode(raw))
-    }
-    _ => raise Failure::Failure("unknown value type: \{kind}")
-  }
-}
-
-///|
 fn encode_value(value : @mturso.Value) -> @json.Json {
-  match value {
-    @mturso.Value::Null => object([("type", @json.Json::string("null"))])
-    @mturso.Value::Integer(value) =>
-      object([
-        ("type", @json.Json::string("integer")),
-        ("value", @json.Json::string(value.to_string())),
-      ])
-    @mturso.Value::Real(value) =>
-      object([
-        ("type", @json.Json::string("float")),
-        ("value", @json.Json::number(value)),
-      ])
-    @mturso.Value::Text(value) =>
-      object([
-        ("type", @json.Json::string("text")),
-        ("value", @json.Json::string(value)),
-      ])
-    @mturso.Value::Blob(value) =>
-      object([
-        ("type", @json.Json::string("blob")),
-        ("base64", @json.Json::string(@base64.encode(value, padding=false))),
-      ])
-  }
+  @json.ToJson::to_json(
+    match value {
+      @mturso.Value::Null => HranaValue::Null
+      @mturso.Value::Integer(value) => HranaValue::Integer(value)
+      @mturso.Value::Real(value) => HranaValue::Real(value)
+      @mturso.Value::Text(value) => HranaValue::Text(value)
+      @mturso.Value::Blob(value) => HranaValue::Blob(value)
+    },
+  )
 }
 
 ///|
-fn decode_args(stmt : Map[String, @json.Json]) -> Array[@mturso.Value] raise {
-  let args = match field(stmt, "args") {
-    Some(value) => as_array(value)
+fn decode_args(stmt : HranaStmt) -> Array[@mturso.Value] raise {
+  let args = match stmt.args {
+    Some(args) => args
     None => []
   }
   let values = []
   for arg in args {
-    values.push(decode_value(arg))
+    values.push(
+      match arg {
+        HranaValue::Null => @mturso.Value::Null
+        HranaValue::Integer(value) => @mturso.Value::Integer(value)
+        HranaValue::Real(value) => @mturso.Value::Real(value)
+        HranaValue::Text(value) => @mturso.Value::Text(value)
+        HranaValue::Blob(value) => @mturso.Value::Blob(value)
+      },
+    )
   }
-  if field(stmt, "named_args") is Some(named) && !as_array(named).is_empty() {
+  if stmt.named_args is Some(named) && !named.is_empty() {
     raise Failure::Failure("named_args are not supported")
   }
   values
@@ -171,17 +128,16 @@ fn decode_args(stmt : Map[String, @json.Json]) -> Array[@mturso.Value] raise {
 ///|
 async fn execute_statement(
   conn : @mturso.Connection,
-  stmt : Map[String, @json.Json],
+  stmt : HranaStmt,
 ) -> @json.Json {
-  let sql = match field(stmt, "sql") {
-    Some(value) => as_string(value)
+  let sql = match stmt.sql {
+    Some(sql) => sql
     None => raise Failure::Failure("No SQL provided")
   }
   let args = decode_args(stmt)
-  let want_rows = match field(stmt, "want_rows") {
-    Some(@json.Json::True) | None => true
-    Some(@json.Json::False) => false
-    _ => raise Failure::Failure("want_rows must be a boolean")
+  let want_rows = match stmt.want_rows {
+    Some(value) => value
+    None => true
   }
   let rows = conn.query_values(sql, args)
   defer rows.close()
@@ -230,72 +186,52 @@ async fn execute_statement(
 
 ///|
 fn condition_is_true(
-  condition : Map[String, @json.Json],
+  conn : @mturso.Connection,
+  condition : HranaBatchCondition,
   results : Array[Bool?],
 ) -> Bool raise {
-  let kind = match field(condition, "type") {
-    Some(value) => as_string(value)
-    None => raise Failure::Failure("condition.type is required")
-  }
-  match kind {
-    "ok" => {
-      let step = match field(condition, "step") {
-        Some(@json.Json::Number(value, ..)) => value.to_int()
-        _ => raise Failure::Failure("condition.step is required")
-      }
+  match condition {
+    Ok(step) =>
       step >= 0 && step < results.length() && results[step] == Some(true)
-    }
-    "error" => {
-      let step = match field(condition, "step") {
-        Some(@json.Json::Number(value, ..)) => value.to_int()
-        _ => raise Failure::Failure("condition.step is required")
-      }
+    Error(step) =>
       step >= 0 && step < results.length() && results[step] != Some(true)
-    }
-    "not" => {
-      let nested = match field(condition, "cond") {
-        Some(value) => as_object(value)
-        None => raise Failure::Failure("condition.cond is required")
-      }
-      !condition_is_true(nested, results)
-    }
-    "and" | "or" => {
-      let conds = match field(condition, "conds") {
-        Some(value) => as_array(value)
-        None => raise Failure::Failure("condition.conds is required")
-      }
-      let mut matched = kind == "and"
+    Not(nested) => !condition_is_true(conn, nested, results)
+    And(conds) => {
+      let mut matched = true
       for cond in conds {
-        let value = condition_is_true(as_object(cond), results)
-        if kind == "and" && !value {
+        if !condition_is_true(conn, cond, results) {
           matched = false
-        } else if kind == "or" && value {
+        }
+      }
+      matched
+    }
+    Or(conds) => {
+      let mut matched = false
+      for cond in conds {
+        if condition_is_true(conn, cond, results) {
           matched = true
         }
       }
       matched
     }
-    "is_autocommit" => true
-    _ => raise Failure::Failure("unsupported condition type: \{kind}")
+    IsAutocommit => conn.autocommit()
+    Unknown(kind) =>
+      raise Failure::Failure("unsupported condition type: \{kind}")
   }
 }
 
 ///|
 async fn execute_batch(
   conn : @mturso.Connection,
-  batch : Map[String, @json.Json],
+  batch : HranaBatch,
 ) -> @json.Json {
-  let steps = match field(batch, "steps") {
-    Some(value) => as_array(value)
-    None => raise Failure::Failure("batch.steps is required")
-  }
+  let steps = batch.steps
   let results : Array[Bool?] = []
   let step_results = []
   let step_errors = []
   for step in steps {
-    let fields = as_object(step)
-    let should_run = match field(fields, "condition") {
-      Some(condition) => condition_is_true(as_object(condition), results)
+    let should_run = match step.condition {
+      Some(condition) => condition_is_true(conn, condition, results)
       None => true
     }
     if !should_run {
@@ -304,10 +240,7 @@ async fn execute_batch(
       step_errors.push(@json.Json::null())
       continue
     }
-    let stmt = match field(fields, "stmt") {
-      Some(value) => as_object(value)
-      None => raise Failure::Failure("batch step stmt is required")
-    }
+    let stmt = step.stmt
     try {
       let result = execute_statement(conn, stmt)
       results.push(Some(true))
@@ -317,7 +250,21 @@ async fn execute_batch(
       error => {
         results.push(Some(false))
         step_results.push(@json.Json::null())
-        step_errors.push(error_object("BATCH_STEP_ERROR", "\{error}"))
+        step_errors.push(
+          match error {
+            @mturso.TursoError::QueryError(message) =>
+              query_error_object(message)
+            @mturso.TursoError::Busy(message) =>
+              sqlite_error_object("SQLITE_BUSY", message)
+            @mturso.TursoError::Conflict(message) =>
+              sqlite_error_object("SQLITE_BUSY_SNAPSHOT", message)
+            @mturso.TursoError::ConnectionError(message) =>
+              sqlite_error_object("SQLITE_CANTOPEN", message)
+            @mturso.TursoError::SyncError(_, message) =>
+              sqlite_error_object("SQLITE_ERROR", message)
+            _ => error_object("BATCH_STEP_ERROR", @debug.to_string(error))
+          },
+        )
       }
     } noraise {
       _ => ()
@@ -332,98 +279,53 @@ async fn execute_batch(
 ///|
 async fn process_request(
   conn : @mturso.Connection,
-  request : @json.Json,
+  request : PipelineCommand,
 ) -> @json.Json {
-  let fields = try as_object(request) catch {
-    error => return error_result(error_object("PROTOCOL_ERROR", "\{error}"))
-  } noraise {
-    value => value
-  }
-  let kind = match field(fields, "type") {
-    Some(value) =>
-      try as_string(value) catch {
-        _ => return error_result(error_object("PROTOCOL_ERROR", "invalid type"))
-      } noraise {
-        value => value
+  match request {
+    Execute(stmt) =>
+      ok_result("execute", execute_statement(conn, stmt)) catch {
+        error =>
+          error_result(
+            match error {
+              @mturso.TursoError::QueryError(message) =>
+                query_error_object(message)
+              @mturso.TursoError::Busy(message) =>
+                sqlite_error_object("SQLITE_BUSY", message)
+              @mturso.TursoError::Conflict(message) =>
+                sqlite_error_object("SQLITE_BUSY_SNAPSHOT", message)
+              @mturso.TursoError::ConnectionError(message) =>
+                sqlite_error_object("SQLITE_CANTOPEN", message)
+              @mturso.TursoError::SyncError(_, message) =>
+                sqlite_error_object("SQLITE_ERROR", message)
+              _ => error_object("EXECUTE_ERROR", @debug.to_string(error))
+            },
+          )
       }
-    None =>
-      return error_result(error_object("UNKNOWN", "request.type is required"))
-  }
-  match kind {
-    "execute" => {
-      let stmt = match field(fields, "stmt") {
-        Some(value) =>
-          try as_object(value) catch {
-            _ =>
-              return error_result(
-                error_object("PROTOCOL_ERROR", "invalid stmt"),
-              )
-          } noraise {
-            value => value
-          }
-        None => return error_result(error_object("NO_STMT", "stmt is required"))
-      }
-      try ok_result("execute", execute_statement(conn, stmt)) catch {
-        error => error_result(error_object("EXECUTE_ERROR", "\{error}"))
-      } noraise {
-        value => value
-      }
-    }
-    "batch" => {
-      let batch = match field(fields, "batch") {
-        Some(value) =>
-          try as_object(value) catch {
-            _ =>
-              return error_result(
-                error_object("PROTOCOL_ERROR", "invalid batch"),
-              )
-          } noraise {
-            value => value
-          }
-        None =>
-          return error_result(error_object("NO_BATCH", "batch is required"))
-      }
-      try ok_result("batch", execute_batch(conn, batch)) catch {
+    Batch(batch) =>
+      ok_result("batch", execute_batch(conn, batch)) catch {
         error => error_result(error_object("BATCH_ERROR", "\{error}"))
-      } noraise {
-        value => value
       }
-    }
-    "close" => ok_result("close", @json.Json::null())
-    _ => error_result(error_object("UNKNOWN", "unknown request type: \{kind}"))
+    Close => ok_result("close", @json.Json::null())
+    Unknown(kind) =>
+      error_result(error_object("UNKNOWN", "unknown request type: \{kind}"))
   }
 }
 
 ///|
 pub async fn process_pipeline_request(
   db : @mturso.Database,
-  body : Bytes,
+  request : PipelineRequest,
 ) -> NativeHttpResponse {
-  let request = try @json.parse(@utf8.decode_lossy(body)) catch {
-    error => return native_error_response(400, "\{error}")
-  } noraise {
-    value => value
-  }
-  let fields = match request {
-    @json.Json::Object(fields) => fields
-    _ => return native_error_response(400, "request must be an object")
-  }
-  if field(fields, "baton") is Some(@json.Json::String(_)) {
+  if request.baton is Some(_) {
     return native_error_response(400, "streams and batons are not supported")
   }
-  let requests = match field(fields, "requests") {
-    Some(@json.Json::Array(requests)) => requests
-    _ => return native_error_response(400, "requests must be an array")
-  }
-  let session = try db.connect() catch {
+  let session = db.connect() catch {
     error => return native_error_response(500, @debug.to_string(error))
-  } noraise {
-    value => value
   }
   defer session.close()
   let results = []
-  for request in requests {
-    results.push(process_request(session, request))
+  for command in request.requests {
+    results.push(process_request(session, command))
   }
   let response = object([
     ("baton", @json.Json::null()),
@@ -436,65 +338,29 @@ pub async fn process_pipeline_request(
 ///|
 pub async fn process_cursor_request(
   db : @mturso.Database,
-  body : Bytes,
+  request : CursorRequest,
 ) -> NativeHttpResponse {
-  let request = try @json.parse(@utf8.decode_lossy(body)) catch {
-    error => return native_error_response(400, "\{error}")
-  } noraise {
-    value => value
-  }
-  let fields = match request {
-    @json.Json::Object(fields) => fields
-    _ => return native_error_response(400, "request must be an object")
-  }
-  if field(fields, "baton") is Some(@json.Json::String(_)) {
+  if request.baton is Some(_) {
     return native_error_response(400, "streams and batons are not supported")
   }
-  let batch = match field(fields, "batch") {
-    Some(value) =>
-      try as_object(value) catch {
-        _ => return native_error_response(400, "invalid batch")
-      } noraise {
-        value => value
-      }
-    None => return native_error_response(400, "batch is required")
-  }
-  let steps = match field(batch, "steps") {
-    Some(@json.Json::Array(steps)) => steps
-    _ => return native_error_response(400, "batch.steps is required")
-  }
-  let session = try db.connect() catch {
+  let steps = request.batch.steps
+  let session = db.connect() catch {
     error => return native_error_response(500, @debug.to_string(error))
-  } noraise {
-    value => value
   }
   defer session.close()
   let lines = StringBuilder()
   lines.write_string("{\"baton\":null,\"base_url\":null}\n")
   let results : Array[Bool?] = []
   for step_idx, step in steps {
-    let step_fields = as_object(step) catch {
-      _ => {
-        results.push(None)
-        continue
-      }
-    }
-    let should_run = match field(step_fields, "condition") {
-      Some(condition) => condition_is_true(as_object(condition), results)
+    let should_run = match step.condition {
+      Some(condition) => condition_is_true(session, condition, results)
       None => true
     }
     if !should_run {
       results.push(None)
       continue
     }
-    let stmt = match field(step_fields, "stmt") {
-      Some(value) => as_object(value)
-      None => {
-        results.push(None)
-        continue
-      }
-    }
-    let result = try execute_statement(session, stmt) catch {
+    let result = execute_statement(session, step.stmt) catch {
       error => {
         results.push(Some(false))
         lines.write_string(
@@ -507,8 +373,6 @@ pub async fn process_cursor_request(
         lines.write_string("\n")
         continue
       }
-    } noraise {
-      value => value
     }
     results.push(Some(true))
     let result_fields = as_object(result)

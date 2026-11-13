@@ -297,6 +297,16 @@ int64_t mturso_conn_last_insert_rowid(mturso_conn_t *conn) {
 }
 
 MOONBIT_FFI_EXPORT
+int32_t mturso_conn_get_autocommit(mturso_conn_t *conn) {
+  mturso_clear_err();
+  if (conn == NULL || conn->conn == NULL) {
+    mturso_set_err("connection is not open");
+    return 0;
+  }
+  return turso_connection_get_autocommit(conn->conn) ? 1 : 0;
+}
+
+MOONBIT_FFI_EXPORT
 int64_t mturso_conn_exec(mturso_conn_t *conn, moonbit_bytes_t sql) {
   mturso_clear_err();
   if (conn == NULL || conn->conn == NULL) {

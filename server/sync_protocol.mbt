@@ -4,28 +4,28 @@
 const SYNC_PAGE_SIZE : Int = 4096
 
 ///|
-const PULL_PAGES : UInt32 = 0
+const PULL_PAGES : UInt = 0
 
 ///|
-const PULL_MVCC_LOGICAL_LOG : UInt32 = 1
+const PULL_MVCC_LOGICAL_LOG : UInt = 1
 
 ///|
-const PAGE_ENCODING_RAW : UInt32 = 0
+const PAGE_ENCODING_RAW : UInt = 0
 
 ///|
-const PAGE_ENCODING_ZSTD : UInt32 = 1
+const PAGE_ENCODING_ZSTD : UInt = 1
 
 ///|
-const APPLY_INCREMENTAL : UInt32 = 0
+const APPLY_INCREMENTAL : UInt = 0
 
 ///|
-const APPLY_REPLACE_BASE : UInt32 = 1
+const APPLY_REPLACE_BASE : UInt = 1
 
 ///|
-const PROTOCOL_PAGES : UInt32 = 1
+const PROTOCOL_PAGES : UInt = 1
 
 ///|
-const PROTOCOL_MVCC_LOGICAL : UInt32 = 2
+const PROTOCOL_MVCC_LOGICAL : UInt = 2
 
 ///|
 /// Binary response used by `/pull-updates`.
@@ -37,10 +37,10 @@ pub(all) struct NativeBinaryHttpResponse {
 
 ///|
 priv struct PullUpdatesRequest {
-  mut encoding : UInt32
-  mut stream_kind : UInt32
+  mut encoding : UInt
+  mut stream_kind : UInt
   mut client_revision : String
-  mut long_poll_timeout_ms : UInt32
+  mut long_poll_timeout_ms : UInt
   mut server_pages_selector : Bytes
   mut server_query_selector : String
 }
@@ -68,8 +68,7 @@ impl @protobuf.Read for PullUpdatesRequest with fn read_with_limit(
       (1, _) => request.encoding = (reader |> @protobuf.read_enum()).0
       (2, _) => reader |> @protobuf.read_string() |> ignore
       (3, _) => request.client_revision = reader |> @protobuf.read_string()
-      (4, _) =>
-        request.long_poll_timeout_ms = reader |> @protobuf.read_uint32()
+      (4, _) => request.long_poll_timeout_ms = reader |> @protobuf.read_uint32()
       (5, _) => request.server_pages_selector = reader |> @protobuf.read_bytes()
       (6, _) => reader |> @protobuf.read_bytes() |> ignore
       (7, _) =>
@@ -86,9 +85,9 @@ priv struct PullUpdatesResponseHeader {
   server_revision : String
   db_size : UInt64
   raw_encoding : Bool
-  stream_kind : UInt32
-  apply_mode : UInt32
-  protocol : UInt32
+  stream_kind : UInt
+  apply_mode : UInt
+  protocol : UInt
 }
 
 ///|
@@ -178,13 +177,11 @@ pub async fn NativeSyncState::pull(
     )
   }
   let reader = @protobuf.BytesReader::from_bytes(body)
-  let request : PullUpdatesRequest = try
-    @protobuf.Read::read(reader as &@protobuf.Reader)
-  catch {
+  let request : PullUpdatesRequest = @protobuf.Read::read(
+    reader as &@protobuf.Reader,
+  ) catch {
     error =>
       return pull_updates_error(400, "invalid pull-updates request: \{error}")
-  } noraise {
-    value => value
   }
   if request.encoding == PAGE_ENCODING_ZSTD {
     return pull_updates_error(400, "zstd page encoding is not supported")
@@ -206,17 +203,13 @@ pub async fn NativeSyncState::pull(
       501, "partial page selectors are not implemented by the native server",
     )
   }
-  let selection = try parse_client_revision(request.client_revision) catch {
+  let selection = parse_client_revision(request.client_revision) catch {
     error => return pull_updates_error(400, "\{error}")
-  } noraise {
-    value => value
   }
   self.operation_lock.acquire()
   defer self.operation_lock.release()
-  let mut current = try self.current_snapshot() catch {
+  let mut current = self.current_snapshot() catch {
     error => return pull_updates_error(500, "\{error}")
-  } noraise {
-    value => value
   }
   match selection {
     Since(revision) =>
@@ -243,10 +236,8 @@ pub async fn NativeSyncState::pull(
           if delay > 0 {
             @async.sleep(delay)
           }
-          current = try self.current_snapshot() catch {
+          current = self.current_snapshot() catch {
             error => return pull_updates_error(500, "\{error}")
-          } noraise {
-            value => value
           }
           if current.revision != revision {
             break
@@ -255,7 +246,7 @@ pub async fn NativeSyncState::pull(
       }
     FullBase => ()
   }
-  let pages = try (
+  let pages = try {
     match selection {
       FullBase => all_pages(current.contents)
       Since(revision) =>
@@ -265,10 +256,8 @@ pub async fn NativeSyncState::pull(
           self.pages_since(revision, current.revision, current.page_count)
         }
     }
-  ) catch {
+  } catch {
     error => return pull_updates_error(400, "\{error}")
-  } noraise {
-    value => value
   }
   let apply_mode = match selection {
     FullBase => APPLY_REPLACE_BASE
@@ -292,26 +281,22 @@ pub async fn NativeSyncState::pull(
     payload_bytes = payload_bytes + entry.1.length()
   }
   let output = Buffer(size_hint=pages.length() * 32 + payload_bytes)
-  try write_framed(output, header) catch {
+  write_framed(output, header) catch {
     error =>
       return pull_updates_error(
         500,
         "failed to encode pull-updates header: \{error}",
       )
-  } noraise {
-    _ => ()
   }
   for entry in pages {
     let (page_id, page) = entry
     let data : PageData = { page_id: page_id.to_uint64(), encoded_page: page, }
-    try write_framed(output, data) catch {
+    write_framed(output, data) catch {
       error =>
         return pull_updates_error(
           500,
           "failed to encode pull-updates page \{page_id}: \{error}",
         )
-    } noraise {
-      _ => ()
     }
   }
   {

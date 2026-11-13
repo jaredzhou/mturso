@@ -34,6 +34,7 @@ typedef struct {
   void (*turso_database_deinit)(const turso_database_t *);
   void (*turso_connection_deinit)(const turso_connection_t *);
   int64_t (*turso_connection_last_insert_rowid)(const turso_connection_t *);
+  bool (*turso_connection_get_autocommit)(const turso_connection_t *);
   turso_status_code_t (*turso_connection_prepare_single)(
       const turso_connection_t *, const char *, turso_statement_t **, const char **);
   turso_status_code_t (*turso_connection_prepare_first)(
@@ -147,6 +148,7 @@ extern turso_api_t mturso_api;
 #define turso_database_deinit mturso_api.turso_database_deinit
 #define turso_connection_deinit mturso_api.turso_connection_deinit
 #define turso_connection_last_insert_rowid mturso_api.turso_connection_last_insert_rowid
+#define turso_connection_get_autocommit mturso_api.turso_connection_get_autocommit
 #define turso_connection_prepare_single mturso_api.turso_connection_prepare_single
 #define turso_connection_prepare_first mturso_api.turso_connection_prepare_first
 #define turso_connection_register_scalar_function \

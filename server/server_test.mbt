@@ -219,7 +219,9 @@ async test "native pipeline executes SQL and parameters" {
     error_body,
   )
   assert_true(error_status == 200)
-  assert_true(error_pipeline_response.contains("\"code\":\"BATCH_STEP_ERROR\""))
+  assert_true(
+    error_pipeline_response.contains("\"code\":\"SQLITE_CONSTRAINT\""),
+  )
 
   let (missing_status, missing_body) = @http.get_text(
     server.base_url() + "/missing",
@@ -307,9 +309,7 @@ async test "native sync server bootstraps a file-backed database" {
   assert_true(update_status == 200)
   assert_true(!update_body.contains("\"type\":\"error\""))
   assert_true(replica.pull())
-  let updated : Array[String] = conn.fetch(
-    "select body from notes order by id",
-  )
+  let updated : Array[String] = conn.fetch("select body from notes order by id")
   assert_true(updated.length() == 2)
   assert_true(updated[0] == "alpha")
   assert_true(updated[1] == "beta-updated")
@@ -434,4 +434,76 @@ async test "native sync server keeps bootstrap state across restart" {
   )
   assert_true(after_restart.length() == 2)
   assert_true(after_restart[1] == "after-restart")
+}
+
+///|
+async test "native sync server applies last push wins across replicas" {
+  server_process_test_lock.acquire()
+  defer server_process_test_lock.release()
+  let executable = match @env.get_env_var("MTURSO_NATIVE_SERVER") {
+    Some(path) if path != "" => path
+    _ => return
+  }
+  let dir = @fs.tmpdir(prefix="mturso-native-push")
+  defer @fs.rmdir(dir, recursive=true)
+  let remote_path = dir + "/remote.db"
+  let remote = @mturso.Database::open(remote_path)
+  let seed = remote.connect()
+  ignore(seed.execute("create table notes(id integer primary key, body text)"))
+  ignore(seed.execute("insert into notes(id, body) values (1, 'base')"))
+  seed.close()
+  remote.close()
+
+  let server = @server.SyncServer::start(
+    @server.SyncServerConfig::new(
+      remote_path,
+      backend=@server.SyncServerBackend::Native,
+      native_executable=Some(executable),
+    ),
+  )
+  defer @async.protect_from_cancel(async fn() { server.stop() })
+
+  let first = @mturso.SyncDatabase::open(
+    @mturso.SyncConfig::new(
+      dir + "/first.db",
+      remote_url=server.base_url(),
+      long_poll_timeout_ms=100,
+    ),
+  )
+  defer first.close()
+  let first_conn = first.connect()
+  defer first_conn.close()
+  ignore(
+    first_conn.execute("insert into notes(id, body) values (2, 'first-push')"),
+  )
+  first.push()
+
+  let second = @mturso.SyncDatabase::open(
+    @mturso.SyncConfig::new(
+      dir + "/second.db",
+      remote_url=server.base_url(),
+      long_poll_timeout_ms=100,
+    ),
+  )
+  defer second.close()
+  let second_conn = second.connect()
+  defer second_conn.close()
+  ignore(
+    second_conn.execute("update notes set body = 'second-push' where id = 1"),
+  )
+  second.push()
+
+  assert_true(first.pull())
+  let rows : Array[(Int, String)] = first_conn.fetch(
+    "select id, body from notes order by id",
+  )
+  assert_true(rows.length() == 2)
+  assert_true(rows[0].1 == "second-push")
+  assert_true(rows[1].1 == "first-push")
+
+  first.push()
+  first.push()
+  let count : Array[Int] = first_conn.fetch("select count(*) from notes")
+  assert_true(count.length() == 1)
+  assert_true(count[0] == 2)
 }

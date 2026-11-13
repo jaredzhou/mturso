@@ -79,23 +79,18 @@ pub fn NativeSyncState::new(
 
 ///|
 fn sync_delta_path(root : String, revision : Int64) -> String {
-  root +
-  "/" +
-  SYNC_REVISIONS_DIR +
-  "/" +
-  revision.to_string() +
-  ".delta"
+  root + "/" + SYNC_REVISIONS_DIR + "/" + revision.to_string() + ".delta"
 }
 
 ///|
-async fn write_atomic(path : String, contents : Bytes) -> Unit raise {
+async fn write_atomic(path : String, contents : Bytes) -> Unit {
   let temp = path + ".tmp"
   @fs.write_binary(temp, contents)
   @fs.rename(temp, path, replace=true)
 }
 
 ///|
-async fn ensure_sync_directories(root : String) -> Unit raise {
+async fn ensure_sync_directories(root : String) -> Unit {
   if !@fs.exists(root) {
     @fs.mkdir(root, recursive=true)
   }
@@ -158,8 +153,7 @@ fn changed_page_ids(previous : Bytes, current : Bytes) -> Array[Int] {
 fn encode_delta(contents : Bytes, changed_pages : Array[Int]) -> Bytes {
   let output = Buffer(
     size_hint=SYNC_DELTA_HEADER_SIZE +
-      changed_pages.length() *
-      SYNC_DELTA_RECORD_SIZE,
+      changed_pages.length() * SYNC_DELTA_RECORD_SIZE,
   )
   output.write_byte(SYNC_DELTA_MAGIC_0)
   output.write_byte(SYNC_DELTA_MAGIC_1)
@@ -204,9 +198,7 @@ fn decode_delta(data : Bytes) -> Array[(Int, Bytes)] raise {
     raise Failure::Failure("invalid sync delta header")
   }
   let page_count = read_uint_le(data, 8).reinterpret_as_int()
-  let expected = SYNC_DELTA_HEADER_SIZE +
-    page_count *
-    SYNC_DELTA_RECORD_SIZE
+  let expected = SYNC_DELTA_HEADER_SIZE + page_count * SYNC_DELTA_RECORD_SIZE
   if data.length() != expected {
     raise Failure::Failure(
       "invalid sync delta length: expected \{expected}, got \{data.length()}",
@@ -216,9 +208,7 @@ fn decode_delta(data : Bytes) -> Array[(Int, Bytes)] raise {
   for index in 0..<page_count {
     let offset = SYNC_DELTA_HEADER_SIZE + index * SYNC_DELTA_RECORD_SIZE
     let page_id = read_uint_le(data, offset).reinterpret_as_int()
-    let page = @buffer.from_bytes(
-      data[offset + 4:offset + 4 + SYNC_PAGE_SIZE],
-    ).to_bytes()
+    let page = @buffer.from_bytes(data[offset + 4:offset + 4 + SYNC_PAGE_SIZE]).to_bytes()
     pages.push((page_id, page))
   }
   pages
@@ -230,7 +220,7 @@ async fn write_delta(
   revision : Int64,
   contents : Bytes,
   changed_pages : Array[Int],
-) -> Unit raise {
+) -> Unit {
   write_atomic(
     sync_delta_path(root, revision),
     encode_delta(contents, changed_pages),
@@ -238,7 +228,7 @@ async fn write_delta(
 }
 
 ///|
-async fn checkpoint_database(db : @mturso.Database) -> Unit raise {
+async fn checkpoint_database(db : @mturso.Database) -> Unit {
   let conn = db.connect()
   defer conn.close()
   let rows = conn.query("pragma wal_checkpoint(truncate)")
@@ -251,20 +241,16 @@ async fn checkpoint_database(db : @mturso.Database) -> Unit raise {
 ///|
 async fn NativeSyncState::current_snapshot(
   self : NativeSyncState,
-) -> SyncSnapshot raise {
-  try checkpoint_database(self.db) catch {
+) -> SyncSnapshot {
+  checkpoint_database(self.db) catch {
     error =>
       raise Failure::Failure(
         "failed to checkpoint database for pull-updates: \{error}",
       )
-  } noraise {
-    _ => ()
   }
-  let contents = try @fs.read_binary(self.database_path) catch {
+  let contents = @fs.read_binary(self.database_path) catch {
     error =>
       raise Failure::Failure("failed to read database snapshot: \{error}")
-  } noraise {
-    value => value
   }
   if contents.length() % SYNC_PAGE_SIZE != 0 {
     raise Failure::Failure(
@@ -278,12 +264,12 @@ async fn NativeSyncState::current_snapshot(
   if !@fs.exists(state_path) || !@fs.exists(baseline_path) {
     let previous_revision = if @fs.exists(state_path) {
       let raw = @fs.read_text(state_path)
-      let parsed = try @string.parse_int64(raw.trim()) catch {
-        _ => 0L
-      } noraise {
-        value => value
+      let parsed = @string.parse_int64(raw.trim()) catch { _ => 0L }
+      if parsed < 0L {
+        0L
+      } else {
+        parsed
       }
-      if parsed < 0L { 0L } else { parsed }
     } else {
       0L
     }
@@ -295,12 +281,10 @@ async fn NativeSyncState::current_snapshot(
     write_delta(self.root, revision, contents, all_pages)
     write_atomic(state_path, @utf8.encode(revision.to_string()))
     write_atomic(baseline_path, contents)
-    return { revision, contents, page_count }
+    return { revision, contents, page_count, }
   }
-  let previous = try @fs.read_binary(baseline_path) catch {
+  let previous = @fs.read_binary(baseline_path) catch {
     error => raise Failure::Failure("failed to read sync baseline: \{error}")
-  } noraise {
-    value => value
   }
   if previous.length() % SYNC_PAGE_SIZE != 0 {
     raise Failure::Failure(
@@ -308,28 +292,24 @@ async fn NativeSyncState::current_snapshot(
     )
   }
   let raw_revision = @fs.read_text(state_path)
-  let previous_revision = try @string.parse_int64(raw_revision.trim()) catch {
+  let previous_revision = @string.parse_int64(raw_revision.trim()) catch {
     _ =>
       raise Failure::Failure(
         "invalid sync state revision: \{raw_revision.trim()}",
       )
-  } noraise {
-    value => value
   }
   if previous_revision <= 0L {
-    raise Failure::Failure(
-      "invalid sync state revision: \{previous_revision}",
-    )
+    raise Failure::Failure("invalid sync state revision: \{previous_revision}")
   }
   if snapshot_hash(previous) == snapshot_hash(contents) {
-    return { revision: previous_revision, contents, page_count }
+    return { revision: previous_revision, contents, page_count, }
   }
   let revision = previous_revision + 1L
   let changed_pages = changed_page_ids(previous, contents)
   write_delta(self.root, revision, contents, changed_pages)
   write_atomic(state_path, @utf8.encode(revision.to_string()))
   write_atomic(baseline_path, contents)
-  { revision, contents, page_count }
+  { revision, contents, page_count, }
 }
 
 ///|
@@ -338,7 +318,7 @@ async fn NativeSyncState::pages_since(
   from_revision : Int64,
   to_revision : Int64,
   page_count : Int,
-) -> Array[(Int, Bytes)] raise {
+) -> Array[(Int, Bytes)] {
   let latest = Map([])
   let mut revision = from_revision + 1L
   while revision <= to_revision {
@@ -348,13 +328,11 @@ async fn NativeSyncState::pages_since(
         "expired client revision: missing delta for \{revision}",
       )
     }
-    let delta = try @fs.read_binary(path) catch {
+    let delta = @fs.read_binary(path) catch {
       error =>
         raise Failure::Failure(
           "failed to read sync delta \{revision}: \{error}",
         )
-    } noraise {
-      value => value
     }
     for entry in decode_delta(delta) {
       latest[entry.0] = entry.1
@@ -388,19 +366,19 @@ priv enum SyncClientRevision {
 
 ///|
 fn parse_client_revision(revision : String) -> SyncClientRevision raise {
-  if revision == "" || revision == "0" || revision.has_prefix("page-v1:") ||
+  if revision == "" ||
+    revision == "0" ||
+    revision.has_prefix("page-v1:") ||
     revision.has_prefix("g1:o") {
     return SyncClientRevision::FullBase
   }
   if revision.has_prefix("g1:r") {
     let raw = revision[4:].to_owned()
-    let value = try @string.parse_int64(raw) catch {
+    let value = @string.parse_int64(raw) catch {
       _ =>
         raise Failure::Failure(
           "invalid pull-updates client revision: \{revision}",
         )
-    } noraise {
-      value => value
     }
     if value <= 0L {
       raise Failure::Failure(
@@ -414,9 +392,7 @@ fn parse_client_revision(revision : String) -> SyncClientRevision raise {
       "unsupported pull-updates revision generation: \{revision}",
     )
   }
-  raise Failure::Failure(
-    "invalid pull-updates client revision: \{revision}",
-  )
+  raise Failure::Failure("invalid pull-updates client revision: \{revision}")
 }
 
 ///|

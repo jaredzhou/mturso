@@ -36,6 +36,7 @@ pub(all) suberror ValueError {
 pub struct Connection {
   // private fields
 }
+pub fn Connection::autocommit(Self) -> Bool raise TursoError
 pub async fn Connection::begin_tx(Self, opts? : TxOptions) -> DbTx raise TursoError
 pub fn Connection::close(Self) -> Unit
 pub fn Connection::exec_blocking(Self, String) -> Int64 raise TursoError

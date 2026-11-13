@@ -736,6 +736,11 @@ async test "观测方法：is_closed / last_insert_rowid / sqlite_version" {
   ignore(conn.execute("insert into t(v) values (7)"))
   assert_true(conn.last_insert_rowid() == 1L)
   assert_true(conn.sqlite_version() == "3.50.4")
+  assert_true(conn.autocommit())
+  ignore(conn.execute("begin"))
+  assert_true(!conn.autocommit())
+  ignore(conn.execute("commit"))
+  assert_true(conn.autocommit())
 
   conn.close()
   assert_true(conn.is_closed())

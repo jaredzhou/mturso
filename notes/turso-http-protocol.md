@@ -543,12 +543,20 @@ range、CRC seed、log header 和事务 frame 格式解码。mturso native serve
 | `/v3/cursor` | 已实现 NDJSON step/row/step_error 输出 |
 | `/pull-updates` | 已实现 raw page bootstrap、增量 pull、long poll 和 MVCC page fallback |
 
+Native server 的数据库池上限固定为 1，匹配官方 v0.8.2 local sync server
+的单连接/串行执行模型，避免同一数据库上的 pipeline batch 与 pull
+checkpoint 并发进入 engine。
+
 Pipeline 当前支持：
 
 - positional args、NULL/INTEGER/REAL/TEXT/BLOB；
 - `execute` 和 `batch`；
 - `ok`、`error`、`not`、`and`、`or`、`is_autocommit` condition；
 - `close`。
+
+`is_autocommit` 直接读取连接的真实 autocommit 状态，而不是常量。这样
+官方 sync client 的 `BEGIN IMMEDIATE → 条件写入 → 条件 COMMIT` batch
+可以按事务执行。
 
 尚未实现：
 
@@ -571,6 +579,16 @@ Pipeline 当前支持：
 - MVCC logical 请求的 page fallback；
 - server 重启后保留 revision、baseline 和增量历史。
 
+Push 当前支持：
+
+- 官方 Go sync client 与 MoonBit `SyncDatabase::push()`；
+- 用户事务内的 UPSERT/UPDATE/INSERT、事务边界和 sync metadata 更新；
+- 多 client 写同一行时 last-push-wins；
+- 大事务 batch 不拆分单个用户事务；
+- 无变化重复 push；
+- 远端已提交但 client 丢失响应后的安全重试；
+- SQLite constraint/parse/busy 错误的兼容错误码。
+
 当前明确不支持：
 
 - Zstd page encoding：HTTP `400`；
@@ -584,7 +602,6 @@ Pipeline 当前支持：
 
 对应的下一批实现：
 
-- [#22](https://github.com/jaredzhou/mturso/issues/22)：push。
 - [#23](https://github.com/jaredzhou/mturso/issues/23)：HTTPS 和鉴权的公网模式。
 
 ## 兼容性矩阵
@@ -593,6 +610,7 @@ Pipeline 当前支持：
 |---|---|---|---|
 | SQL-over-HTTP v3 source spec | 源码规范 | 不用于 sync server | 部分实现 |
 | `/v2/pipeline` | 有 | 有 | 有 |
+| sync push batch | 公开 docs 未专门描述 | 有 | 有 |
 | `/v3/pipeline` | 源码规范为主 | 无 | 有，功能子集 |
 | `/v3/cursor` | 源码规范 | 无 | 有，功能子集 |
 | `/pull-updates` page stream | 无完整 wire docs | 有 | bootstrap + 页面增量 |

@@ -1,8 +1,8 @@
 ///|
 fn pull_request(
   client_revision : String,
-  stream_kind~ : UInt32 = 0U,
-  encoding~ : UInt32 = 0U,
+  stream_kind~ : UInt = 0U,
+  encoding~ : UInt = 0U,
 ) -> Bytes raise {
   let output = Buffer()
   if encoding != 0U {

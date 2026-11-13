@@ -12,6 +12,8 @@ pub fn conn_exec(Conn, Bytes) -> Int64
 
 pub fn conn_exec_stmt(Conn, Stmt) -> Int64
 
+pub fn conn_get_autocommit(Conn) -> Int
+
 pub fn conn_last_insert_rowid(Conn) -> Int64
 
 pub fn conn_prepare(Conn, Bytes) -> Stmt

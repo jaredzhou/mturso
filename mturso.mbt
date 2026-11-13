@@ -219,6 +219,15 @@ pub fn Connection::last_insert_rowid(
 }
 
 ///|
+/// Whether the connection currently has no explicit transaction.
+pub fn Connection::autocommit(self : Connection) -> Bool raise TursoError {
+  self.ensure_open()
+  let value = @ffi.conn_get_autocommit(self.raw)
+  check_error()
+  value != 0
+}
+
+///|
 /// 引擎自报的 SQLite 兼容版本（兼容性伪装，不是 Turso 自己的版本号）。
 pub async fn Connection::sqlite_version(
   self : Connection,

@@ -108,6 +108,7 @@ static int try_load(const char *path) {
   RESOLVE(turso_database_deinit);
   RESOLVE(turso_connection_deinit);
   RESOLVE(turso_connection_last_insert_rowid);
+  RESOLVE(turso_connection_get_autocommit);
   RESOLVE(turso_connection_prepare_single);
   RESOLVE(turso_connection_prepare_first);
   RESOLVE(turso_connection_register_scalar_function);

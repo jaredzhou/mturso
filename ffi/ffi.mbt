@@ -322,6 +322,11 @@ pub extern "c" fn conn_resume_sync_io(conn : Conn) = "mturso_conn_resume_sync_io
 pub extern "c" fn conn_last_insert_rowid(conn : Conn) -> Int64 = "mturso_conn_last_insert_rowid"
 
 ///|
+/// Whether the connection is currently in autocommit mode.
+#borrow(conn)
+pub extern "c" fn conn_get_autocommit(conn : Conn) -> Int = "mturso_conn_get_autocommit"
+
+///|
 /// 显式关闭连接（幂等）。
 #borrow(conn)
 pub extern "c" fn conn_close(conn : Conn) = "mturso_conn_close"
