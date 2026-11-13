@@ -193,7 +193,7 @@ async test "类型化行集：内建类型按类型往返，不再是 TSV 文本
     #|  ts text, doc text
     #|)
   ignore(conn.execute(create_sql))
-  let document : Json = @json.parse("{\"kind\":\"typed\",\"n\":7}")
+  let document : Json = {"kind":"typed","n":7}
   let insert_sql =
     #|insert into typed values (
     #|  ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
@@ -579,7 +579,8 @@ async test "#3 错误分型：WAL 写锁 -> Busy" {
     tx2.rollback()
   })
   match error {
-    @mturso.TursoError::Busy(message) => assert_true(message.length() > 0)
+    @mturso.TursoError::Busy(message) =>
+      assert_true(message.contains("database is locked"))
     error => fail("unexpected error: \{@debug.to_string(error)}")
   }
   tx1.rollback()
@@ -609,7 +610,7 @@ async test "#3/#5 MVCC 并发写冲突 -> Conflict" {
   })
   match error {
     @mturso.TursoError::Conflict(message) =>
-      assert_true(message.length() > 0)
+      assert_true(message.contains("Write-write conflict"))
     error => fail("unexpected error: \{@debug.to_string(error)}")
   }
 }
