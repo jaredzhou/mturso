@@ -631,10 +631,12 @@ async test "#6 retry_tx 在真实 MVCC 冲突后重试成功" {
 
   let tx1 = c1.begin_tx()
   ignore(tx1.execute("update t set v = 1 where id = 1"))
-  let attempts : Ref[Int] = { val: 0, }
-  let first_conflict : Ref[Bool] = { val: false, }
-  let released : Ref[Bool] = { val: false, }
-  let done : Ref[Bool] = { val: false, }
+  let conflict_ready = @cond_var.Cond()
+  let release_ready = @cond_var.Cond()
+  let mut attempts = 0
+  let mut saw_conflict = false
+  let mut released = false
+  let mut done = false
 
   @async.with_task_group(group => {
     group.spawn_bg(() => {
@@ -642,15 +644,16 @@ async test "#6 retry_tx 在真实 MVCC 冲突后重试成功" {
         @mturso.retry_tx(
           c2,
           async fn(tx) -> Unit raise @mturso.TursoError {
-            attempts.val = attempts.val + 1
-            if attempts.val == 1 {
+            attempts = attempts + 1
+            if attempts == 1 {
               errdefer {
-                first_conflict.val = true
+                saw_conflict = true
+                conflict_ready.signal()
               }
               ignore(tx.execute("update t set v = 2 where id = 1"))
             } else {
-              while !released.val {
-                @async.sleep(1)
+              while !released {
+                release_ready.wait()
               }
               ignore(tx.execute("update t set v = 2 where id = 1"))
             }
@@ -663,17 +666,18 @@ async test "#6 retry_tx 在真实 MVCC 冲突后重试成功" {
           },
         ),
       )
-      done.val = true
+      done = true
     })
-    while !first_conflict.val {
-      @async.sleep(1)
+    while !saw_conflict {
+      conflict_ready.wait()
     }
     tx1.commit()
-    released.val = true
+    released = true
+    release_ready.signal()
   })
 
-  assert_true(done.val)
-  assert_true(attempts.val >= 2)
+  assert_true(done)
+  assert_true(attempts >= 2)
   assert_true(one_int(c2, "select v from t where id = 1") == 2L)
 }
 
