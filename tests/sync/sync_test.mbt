@@ -58,7 +58,10 @@ async test "sync database bootstraps remote data" {
   remote.close()
 
   let server = @server.SyncServer::start(
-    @server.SyncServerConfig::new(remote_path),
+    @server.SyncServerConfig::new(
+      remote_path,
+      backend=@server.SyncServerBackend::External,
+    ),
   )
   defer @async.protect_from_cancel(async fn() { server.stop() })
   let config = @mturso.SyncConfig::new(
@@ -156,7 +159,10 @@ async test "sync database pushes committed local changes" {
   let dir = @fs.tmpdir(prefix="mturso-sync-push")
   defer @fs.rmdir(dir, recursive=true)
   let server = @server.SyncServer::start(
-    @server.SyncServerConfig::new(dir + "/remote.db"),
+    @server.SyncServerConfig::new(
+      dir + "/remote.db",
+      backend=@server.SyncServerBackend::External,
+    ),
   )
   defer @async.protect_from_cancel(async fn() { server.stop() })
 
@@ -226,7 +232,10 @@ async test "sync push failure keeps local changes for retry" {
   defer @fs.rmdir(dir, recursive=true)
   let remote_path = dir + "/remote.db"
   let server = @server.SyncServer::start(
-    @server.SyncServerConfig::new(remote_path),
+    @server.SyncServerConfig::new(
+      remote_path,
+      backend=@server.SyncServerBackend::External,
+    ),
   )
   defer @async.protect_from_cancel(async fn() { server.stop() })
   let address = server.base_url()[7:].to_owned()
@@ -258,7 +267,11 @@ async test "sync push failure keeps local changes for retry" {
   assert_true(network_error)
 
   let restarted = @server.SyncServer::start(
-    @server.SyncServerConfig::new(remote_path, address~),
+    @server.SyncServerConfig::new(
+      remote_path,
+      address~,
+      backend=@server.SyncServerBackend::External,
+    ),
   )
   defer @async.protect_from_cancel(async fn() { restarted.stop() })
   source.push()
@@ -291,7 +304,10 @@ async test "sync pull applies remote changes and replays local changes" {
   let dir = @fs.tmpdir(prefix="mturso-sync-pull")
   defer @fs.rmdir(dir, recursive=true)
   let server = @server.SyncServer::start(
-    @server.SyncServerConfig::new(dir + "/remote.db"),
+    @server.SyncServerConfig::new(
+      dir + "/remote.db",
+      backend=@server.SyncServerBackend::External,
+    ),
   )
   defer @async.protect_from_cancel(async fn() { server.stop() })
   let address = server.base_url()[7:].to_owned()
@@ -368,7 +384,11 @@ async test "sync pull applies remote changes and replays local changes" {
   assert_true(before_restart.length() == 3)
 
   let restarted = @server.SyncServer::start(
-    @server.SyncServerConfig::new(dir + "/remote.db", address~),
+    @server.SyncServerConfig::new(
+      dir + "/remote.db",
+      address~,
+      backend=@server.SyncServerBackend::External,
+    ),
   )
   defer @async.protect_from_cancel(async fn() { restarted.stop() })
   assert_true(source.pull())
@@ -409,7 +429,10 @@ async test "sync database reports stats and checkpoints the WAL" {
   let dir = @fs.tmpdir(prefix="mturso-sync-stats")
   defer @fs.rmdir(dir, recursive=true)
   let server = @server.SyncServer::start(
-    @server.SyncServerConfig::new(dir + "/remote.db"),
+    @server.SyncServerConfig::new(
+      dir + "/remote.db",
+      backend=@server.SyncServerBackend::External,
+    ),
   )
   defer @async.protect_from_cancel(async fn() { server.stop() })
 
@@ -459,7 +482,10 @@ async test "sync database close rejects new work while draining operations" {
   let dir = @fs.tmpdir(prefix="mturso-sync-close")
   defer @fs.rmdir(dir, recursive=true)
   let server = @server.SyncServer::start(
-    @server.SyncServerConfig::new(dir + "/remote.db"),
+    @server.SyncServerConfig::new(
+      dir + "/remote.db",
+      backend=@server.SyncServerBackend::External,
+    ),
   )
   defer @async.protect_from_cancel(async fn() { server.stop() })
   let source = @mturso.SyncDatabase::open(

@@ -353,7 +353,7 @@ async fn demo(conn : @mturso.Connection) -> Unit raise @mturso.TursoError {
 
 ```bash
 moon check --target native      # type check
-moon test  --target native      # run the test suite (51 tests)
+moon test  --target native      # run the test suite (62 tests)
 ```
 
 Do not run a bare `moon fmt` over the sources: this toolchain respells `Int` to `Int32`. If you do, revert with `sed -i 's/Int32/Int/g'` on the touched files.
@@ -375,7 +375,7 @@ uses it automatically for these targets.
 Override `SYNC_DB`, `SYNC_ADDR`, or `TURSODB` when needed. `make server-wrapper`
 uses the unified `cmd/server` launcher with external `tursodb`.
 
-`SyncServerConfig` selects the external pinned CLI by default. The native
+`SyncServerConfig` selects the self-hosted native backend by default. The native
 backend uses the in-process `jaredzhou/pony@0.7.0` HTTP server and Turso engine.
 Both the launcher and the native serving process are the same `cmd/server`
 executable; `--serve-native` is its internal serving mode:
@@ -386,6 +386,7 @@ let server = @server.SyncServer::start(
     "./server.db",
     backend=@server.SyncServerBackend::Native,
     native_executable=Some("./server"),
+    auth=@server.SyncServerAuth::BearerToken(token),
   ),
 )
 ```
@@ -397,8 +398,41 @@ The internal `--serve-native` flag exists only for library-managed
 
 The native backend implements `/v2/pipeline`, `/v3/pipeline`, and
 `/v3/cursor`, including batches, conditional steps, positional parameters,
-typed rows, BLOB/base64, and per-step errors. It is loopback-only and does not
-yet persist batons for interactive transactions spanning multiple HTTP requests.
+typed rows, BLOB/base64, and per-step errors. It does not yet persist batons for
+interactive transactions spanning multiple HTTP requests.
+
+The native server speaks plain HTTP. It listens on loopback by default. Bearer
+authentication is enforced by Pony middleware on every sync endpoint:
+
+```text
+Authorization: Bearer <token>
+```
+
+Set `MTURSO_SYNC_BEARER_TOKEN` when launching the native server directly.
+Missing, malformed, and incorrect credentials all receive `401 Unauthorized`.
+The static token is compared in constant time, and tokens are never written to
+logs or protocol errors. `SyncServerAuth::BearerVerifier` reserves the same
+middleware seam for JWT/OIDC verification.
+
+MoonBit does not currently have an HTTPS server implementation for this path,
+so the native server deliberately does not accept certificate/private-key
+configuration. A public deployment must use a TLS-terminating reverse proxy
+such as Caddy or nginx in front of a loopback-bound native server. The proxy is
+responsible for the certificate, SAN matching, and preserving the
+`Authorization` header. Do not expose the plain HTTP listener directly.
+
+For a proxy in another container or private host, set
+`MTURSO_SYNC_EXTERNAL_TLS_PROXY=1`. A non-loopback native bind is rejected
+unless that explicit proxy mode and Bearer authentication are both configured:
+
+```powershell
+$env:MTURSO_SYNC_BEARER_TOKEN = "<long-random-token>"
+$env:MTURSO_SYNC_EXTERNAL_TLS_PROXY = "1"
+./server.exe ./server.db 0.0.0.0:8080
+```
+
+The external `tursodb --tursodb` backend remains loopback-only and has no
+built-in authentication because the pinned CLI does not implement it.
 
 Real Turso Cloud validation is optional because deterministic CI uses the pinned
 local server. To smoke-test a Cloud database, provide the URL and token through

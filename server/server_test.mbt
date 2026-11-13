@@ -4,8 +4,98 @@
 let server_process_test_lock : @async.Semaphore = @async.Semaphore::Semaphore(1)
 
 ///|
+test "sync bearer authentication accepts only a valid token" {
+  let auth = @server.SyncServerAuth::BearerToken("correct-horse")
+  assert_true(auth.verify_header(Some("Bearer correct-horse")))
+  assert_true(auth.verify_header(Some("bearer correct-horse")))
+  assert_false(auth.verify_header(None))
+  assert_false(auth.verify_header(Some("Basic correct-horse")))
+  assert_false(auth.verify_header(Some("Bearer wrong-horse")))
+  assert_false(auth.verify_header(Some("Bearer correct-horse extra")))
+  assert_false(auth.verify_header(Some("Bearer")))
+}
+
+///|
+test "sync bearer verifier receives the bare token" {
+  let seen = Ref("")
+  let auth = @server.SyncServerAuth::BearerVerifier(token => {
+    seen.val = token
+    token == "verified"
+  })
+  assert_true(auth.verify_header(Some("Bearer verified")))
+  assert_true(seen.val == "verified")
+  assert_false(auth.verify_header(Some("Bearer rejected")))
+}
+
+///|
+test "sync server validates proxy and authentication combinations" {
+  let config = @server.SyncServerConfig::new(
+    ":memory:",
+    address="0.0.0.0:8080",
+    auth=@server.SyncServerAuth::BearerToken("secret"),
+    external_tls_proxy=true,
+  )
+  config.validate()
+
+  let missing_proxy = @server.SyncServerConfig::new(
+    ":memory:",
+    address="0.0.0.0:8080",
+    auth=@server.SyncServerAuth::BearerToken("secret"),
+  )
+  let missing_proxy_error = try missing_proxy.validate() catch {
+    @mturso.TursoError::SyncError(_, message) => message
+    _ => ""
+  } noraise {
+    _ => ""
+  }
+  assert_true(missing_proxy_error.contains("external_tls_proxy"))
+
+  let missing_auth = @server.SyncServerConfig::new(
+    ":memory:",
+    address="0.0.0.0:8080",
+    external_tls_proxy=true,
+  )
+  let missing_auth_error = try missing_auth.validate() catch {
+    @mturso.TursoError::SyncError(_, message) => message
+    _ => ""
+  } noraise {
+    _ => ""
+  }
+  assert_true(missing_auth_error.contains("Bearer authentication"))
+
+  let external_auth = @server.SyncServerConfig::new(
+    ":memory:",
+    backend=@server.SyncServerBackend::External,
+    auth=@server.SyncServerAuth::BearerToken("secret"),
+  )
+  let external_auth_error = try external_auth.validate() catch {
+    @mturso.TursoError::SyncError(_, message) => message
+    _ => ""
+  } noraise {
+    _ => ""
+  }
+  assert_true(external_auth_error.contains("does not support built-in"))
+
+  let empty_token = @server.SyncServerConfig::new(
+    ":memory:",
+    auth=@server.SyncServerAuth::BearerToken(""),
+  )
+  let empty_token_error = try empty_token.validate() catch {
+    @mturso.TursoError::SyncError(_, message) => message
+    _ => ""
+  } noraise {
+    _ => ""
+  }
+  assert_true(empty_token_error.contains("must not be empty"))
+}
+
+///|
 async test "sync server rejects non-loopback addresses" {
-  let config = @server.SyncServerConfig::new(":memory:", address="0.0.0.0:8080")
+  let config = @server.SyncServerConfig::new(
+    ":memory:",
+    backend=@server.SyncServerBackend::External,
+    address="0.0.0.0:8080",
+  )
   let mut rejected = false
   try ignore(@server.SyncServer::start(config)) catch {
     @mturso.TursoError::SyncError(@mturso.SyncErrorKind::Protocol, message) => {
@@ -25,6 +115,7 @@ async test "sync server uses only a matching tursodb version" {
     ":memory:",
     tursodb_path=Some("moon"),
     startup_timeout_ms=100,
+    backend=@server.SyncServerBackend::External,
   )
   let mut rejected = false
   try ignore(@server.SyncServer::start(config)) catch {
@@ -52,6 +143,7 @@ async test "sync server starts, listens, and stops idempotently" {
   let config = @server.SyncServerConfig::new(
     dir + "/server.db",
     tursodb_path=Some(path),
+    backend=@server.SyncServerBackend::External,
   )
   let server = @server.SyncServer::start(config)
   let base_url = server.base_url()
@@ -77,6 +169,7 @@ async test "sync server reports child early exit" {
     dir,
     tursodb_path=Some(path),
     startup_timeout_ms=1_000,
+    backend=@server.SyncServerBackend::External,
   )
   let mut rejected = false
   try ignore(@server.SyncServer::start(config)) catch {
@@ -108,6 +201,7 @@ async test "sync server reports a bind conflict" {
     tursodb_path=Some(path),
     address=occupied.addr.to_string(),
     startup_timeout_ms=1_000,
+    backend=@server.SyncServerBackend::External,
   )
   let mut rejected = false
   try ignore(@server.SyncServer::start(config)) catch {
@@ -123,7 +217,11 @@ async test "sync server reports a bind conflict" {
 }
 
 ///|
-async fn post_pipeline(base_url : String, body : String) -> (Int, String) {
+async fn post_pipeline_with_auth(
+  base_url : String,
+  body : String,
+  auth_token : String?,
+) -> (Int, String) {
   let client = @http.Client::Client()
   defer client.close()
   let headers : @http.Headers = Map([])
@@ -131,6 +229,11 @@ async fn post_pipeline(base_url : String, body : String) -> (Int, String) {
   headers[@http.CaseInsensitiveString("Content-Length")] = body
     .length()
     .to_string()
+  match auth_token {
+    Some(token) =>
+      headers[@http.CaseInsensitiveString("Authorization")] = "Bearer \{token}"
+    None => ()
+  }
   let conn = client.request(
     @http.Post,
     "\{base_url}/v2/pipeline",
@@ -140,6 +243,11 @@ async fn post_pipeline(base_url : String, body : String) -> (Int, String) {
   conn.text.write(body)
   let response = conn.end_request()
   (response.code, conn.text.read_all())
+}
+
+///|
+async fn post_pipeline(base_url : String, body : String) -> (Int, String) {
+  post_pipeline_with_auth(base_url, body, None)
 }
 
 ///|
@@ -232,6 +340,122 @@ async test "native pipeline executes SQL and parameters" {
   let (bad_status, bad_body) = post_pipeline(server.base_url(), "{")
   assert_true(bad_status == 400)
   assert_true(bad_body.contains("error"))
+}
+
+///|
+async test "native sync server enforces bearer authentication end to end" {
+  server_process_test_lock.acquire()
+  defer server_process_test_lock.release()
+  let executable = match @env.get_env_var("MTURSO_NATIVE_SERVER") {
+    Some(path) if path != "" => path
+    _ => return
+  }
+  let dir = @fs.tmpdir(prefix="mturso-native-auth")
+  defer @fs.rmdir(dir, recursive=true)
+  let remote_path = dir + "/remote.db"
+  let remote = @mturso.Database::open(remote_path)
+  let seed = remote.connect()
+  ignore(seed.execute("create table notes(id integer primary key, body text)"))
+  ignore(seed.execute("insert into notes(body) values ('base')"))
+  seed.close()
+  remote.close()
+
+  let token = "integration-secret-value"
+  let server = @server.SyncServer::start(
+    @server.SyncServerConfig::new(
+      remote_path,
+      backend=@server.SyncServerBackend::Native,
+      native_executable=Some(executable),
+      auth=@server.SyncServerAuth::BearerToken(token),
+    ),
+  )
+  defer @async.protect_from_cancel(async fn() { server.stop() })
+
+  let request =
+    #|{"baton":null,"requests":[{"type":"execute","stmt":{"sql":"select count(*) from notes"}}]}
+  let (missing_status, missing_body) = post_pipeline(server.base_url(), request)
+  assert_true(missing_status == 401)
+  assert_true(missing_body.contains("Unauthorized"))
+  assert_false(missing_body.contains(token))
+
+  let (wrong_status, wrong_body) = post_pipeline_with_auth(
+    server.base_url(),
+    request,
+    Some("wrong-token"),
+  )
+  assert_true(wrong_status == 401)
+  assert_true(wrong_body.contains("Unauthorized"))
+  assert_false(wrong_body.contains("wrong-token"))
+
+  let remote_insert =
+    #|{"baton":null,"requests":[{"type":"execute","stmt":{"sql":"insert into notes(body) values ('from-server')"}}]}
+  let (insert_status, insert_body) = post_pipeline_with_auth(
+    server.base_url(),
+    remote_insert,
+    Some(token),
+  )
+  assert_true(insert_status == 200)
+  assert_false(insert_body.contains("\"type\":\"error\""))
+
+  let first = @mturso.SyncDatabase::open(
+    @mturso.SyncConfig::new(
+      dir + "/first.db",
+      remote_url=server.base_url(),
+      auth_token=Some(token),
+      long_poll_timeout_ms=100,
+    ),
+  )
+  defer first.close()
+  let first_conn = first.connect()
+  let initial : Array[String] = first_conn.fetch(
+    "select body from notes order by id",
+  )
+  assert_true(initial.length() == 2)
+  assert_true(initial[0] == "base")
+  assert_true(initial[1] == "from-server")
+  ignore(first_conn.execute("insert into notes(body) values ('pushed')"))
+  first_conn.close()
+  first.push()
+
+  let second = @mturso.SyncDatabase::open(
+    @mturso.SyncConfig::new(
+      dir + "/second.db",
+      remote_url=server.base_url(),
+      auth_token=Some(token),
+      long_poll_timeout_ms=100,
+    ),
+  )
+  defer second.close()
+  let second_conn = second.connect()
+  let pushed : Array[String] = second_conn.fetch(
+    "select body from notes order by id",
+  )
+  assert_true(pushed.length() == 3)
+  assert_true(pushed[2] == "pushed")
+  second_conn.close()
+
+  first.checkpoint()
+  let stats = first.stats()
+  assert_true(stats.revision.length() > 0)
+
+  let unauthorized = try
+    @mturso.SyncDatabase::open(
+      @mturso.SyncConfig::new(
+        dir + "/unauthorized.db",
+        remote_url=server.base_url(),
+        long_poll_timeout_ms=100,
+      ),
+    )
+  catch {
+    @mturso.TursoError::SyncError(@mturso.SyncErrorKind::Auth, _) => {
+      return
+    }
+    error => fail("expected auth error, got \{@debug.to_string(error)}")
+  } noraise {
+    value => value
+  }
+  unauthorized.close()
+  fail("sync database without a bearer token unexpectedly opened")
 }
 
 ///|

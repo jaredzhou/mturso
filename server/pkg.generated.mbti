@@ -52,6 +52,14 @@ pub async fn SyncServer::start(SyncServerConfig) -> Self raise @mturso.TursoErro
 pub async fn SyncServer::stop(Self) -> Unit
 pub async fn SyncServer::wait(Self) -> Int
 
+pub(all) enum SyncServerAuth {
+  Disabled
+  BearerToken(String)
+  BearerVerifier((String) -> Bool)
+}
+pub fn SyncServerAuth::is_enabled(Self) -> Bool
+pub fn SyncServerAuth::verify_header(Self, String?) -> Bool
+
 pub(all) enum SyncServerBackend {
   External
   Native
@@ -60,7 +68,8 @@ pub(all) enum SyncServerBackend {
 pub struct SyncServerConfig {
   // private fields
 }
-pub fn SyncServerConfig::new(String, tursodb_path? : String?, native_executable? : String?, address? : String, startup_timeout_ms? : Int, backend? : SyncServerBackend) -> Self
+pub fn SyncServerConfig::new(String, tursodb_path? : String?, native_executable? : String?, address? : String, startup_timeout_ms? : Int, backend? : SyncServerBackend, auth? : SyncServerAuth, external_tls_proxy? : Bool) -> Self
+pub fn SyncServerConfig::validate(Self) -> Unit raise @mturso.TursoError
 
 // Type aliases
 

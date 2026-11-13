@@ -15,6 +15,8 @@ pub struct SyncServerConfig {
   priv address : String
   priv startup_timeout_ms : Int
   priv backend : SyncServerBackend
+  priv auth : SyncServerAuth
+  priv external_tls_proxy : Bool
 }
 
 ///|
@@ -24,7 +26,9 @@ pub fn SyncServerConfig::new(
   native_executable~ : String? = None,
   address~ : String = "127.0.0.1:0",
   startup_timeout_ms~ : Int = 10_000,
-  backend~ : SyncServerBackend = External,
+  backend~ : SyncServerBackend = Native,
+  auth~ : SyncServerAuth = Disabled,
+  external_tls_proxy~ : Bool = false,
 ) -> SyncServerConfig {
   {
     database_path,
@@ -33,6 +37,8 @@ pub fn SyncServerConfig::new(
     address,
     startup_timeout_ms,
     backend,
+    auth,
+    external_tls_proxy,
   }
 }
 
@@ -111,12 +117,66 @@ async fn check_tursodb_version(path : String) -> Unit raise @mturso.TursoError {
 }
 
 ///|
-fn validate_loopback(address : String) -> Unit raise @mturso.TursoError {
-  if !(address.has_prefix("127.0.0.1:") || address.has_prefix("[::1]:")) {
+fn is_loopback_address(address : String) -> Bool {
+  address.has_prefix("127.") || address.has_prefix("[::1]:")
+}
+
+///|
+/// Validate security-sensitive bind and authentication settings before
+/// starting any backend or opening the database.
+pub fn SyncServerConfig::validate(
+  self : SyncServerConfig,
+) -> Unit raise @mturso.TursoError {
+  if self.startup_timeout_ms <= 0 {
     raise sync_server_error(
       @mturso.SyncErrorKind::Protocol,
-      "SyncServer only supports loopback addresses in the external server phase: \{address}",
+      "startup_timeout_ms must be positive",
     )
+  }
+  match self.auth {
+    BearerToken(token) if token == "" =>
+      raise sync_server_error(
+        @mturso.SyncErrorKind::Protocol,
+        "Bearer token must not be empty",
+      )
+    _ => ()
+  }
+  let loopback = is_loopback_address(self.address)
+  match self.backend {
+    External => {
+      if !loopback {
+        raise sync_server_error(
+          @mturso.SyncErrorKind::Protocol,
+          "external tursodb backend only supports loopback addresses",
+        )
+      }
+      if self.auth.is_enabled() {
+        raise sync_server_error(
+          @mturso.SyncErrorKind::Protocol,
+          "external tursodb backend does not support built-in authentication",
+        )
+      }
+    }
+    Native => {
+      if self.external_tls_proxy && !self.auth.is_enabled() {
+        raise sync_server_error(
+          @mturso.SyncErrorKind::Protocol,
+          "external TLS proxy mode requires Bearer authentication",
+        )
+      }
+      if !loopback && !self.external_tls_proxy {
+        raise sync_server_error(
+          @mturso.SyncErrorKind::Protocol,
+          "non-loopback sync server binds require external_tls_proxy mode",
+        )
+      }
+      if !loopback && !self.auth.is_enabled() {
+        raise sync_server_error(
+          @mturso.SyncErrorKind::Protocol,
+          "non-loopback sync server binds require Bearer authentication",
+        )
+      }
+    }
   }
 }
 
@@ -155,20 +215,24 @@ priv enum SyncServerStartup {
 async fn wait_until_listening(
   address : String,
   timeout_ms : Int,
+  auth : SyncServerAuth,
 ) -> SyncServerStartup {
   let parsed = @socket.Addr::parse(address) catch {
     _ => return SyncServerStartup::Timeout
+  }
+  let headers : @http.Headers = Map([])
+  headers[@http.CaseInsensitiveString("content-type")] = "application/json"
+  match auth {
+    BearerToken(token) =>
+      headers[@http.CaseInsensitiveString("authorization")] = "Bearer \{token}"
+    _ => ()
   }
   let started = @async.now()
   @async.sleep(50)
   for ;; {
     let healthy = try
       @async.with_timeout(250, () => {
-        ignore(
-          @http.post_text("http://\{parsed}", "{}", headers={
-            "content-type": "application/json",
-          }),
-        )
+        ignore(@http.post_text("http://\{parsed}", "{}", headers~))
       })
     catch {
       _ => false
@@ -205,20 +269,24 @@ async fn terminate_process(process : @process.OrphanProcess) -> Unit {
 pub async fn SyncServer::start(
   config : SyncServerConfig,
 ) -> SyncServer raise @mturso.TursoError {
-  validate_loopback(config.address)
-  if config.startup_timeout_ms <= 0 {
-    raise sync_server_error(
-      @mturso.SyncErrorKind::Protocol,
-      "startup_timeout_ms must be positive",
-    )
-  }
+  config.validate()
   let executable = match config.backend {
     External => {
       let executable = resolve_tursodb_path(config.tursodb_path)
       check_tursodb_version(executable)
       executable
     }
-    Native => resolve_native_executable(config.native_executable)
+    Native => {
+      match config.auth {
+        BearerVerifier(_) =>
+          raise sync_server_error(
+            @mturso.SyncErrorKind::Protocol,
+            "BearerVerifier cannot be passed to a spawned native server; use BearerToken or run the native server in-process",
+          )
+        _ => ()
+      }
+      resolve_native_executable(config.native_executable)
+    }
   }
   let address = allocate_port(config.address)
   let process_args = match config.backend {
@@ -230,10 +298,22 @@ pub async fn SyncServer::start(
     External => @process.Discard
     Native => @process.ToFile(diagnostic_path)
   }
+  let child_env = Map([
+    ("MTURSO_SYNC_BEARER_TOKEN", ""),
+    ("MTURSO_SYNC_EXTERNAL_TLS_PROXY", "0"),
+  ])
+  match config.auth {
+    BearerToken(token) => child_env["MTURSO_SYNC_BEARER_TOKEN"] = token
+    _ => ()
+  }
+  if config.external_tls_proxy {
+    child_env["MTURSO_SYNC_EXTERNAL_TLS_PROXY"] = "1"
+  }
   let process = try
     @process.spawn_orphan(
       executable,
       process_args,
+      extra_env=child_env,
       stdout=Discard,
       stderr~,
       no_console_window=true,
@@ -242,14 +322,14 @@ pub async fn SyncServer::start(
     error =>
       raise sync_server_error(
         @mturso.SyncErrorKind::Internal,
-        "failed to start tursodb: \{error}",
+        "failed to start sync server process: \{error}",
       )
   } noraise {
     value => value
   }
   let startup = try
     @async.any([
-      () => wait_until_listening(address, config.startup_timeout_ms),
+      () => wait_until_listening(address, config.startup_timeout_ms, config.auth),
       () => SyncServerStartup::Exited(process.wait()),
     ])
   catch {

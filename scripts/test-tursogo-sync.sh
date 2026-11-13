@@ -12,7 +12,9 @@ fi
 tmp="$(mktemp -d)"
 address="127.0.0.1:$((18080 + $$ % 1000))"
 log="$tmp/native-server.log"
-"$server" "$tmp/remote.db" "$address" >"$log" 2>&1 &
+sync_token="mturso-auth-test-$$"
+MTURSO_SYNC_BEARER_TOKEN="$sync_token" \
+  "$server" "$tmp/remote.db" "$address" >"$log" 2>&1 &
 pid=$!
 
 cleanup() {
@@ -23,9 +25,11 @@ trap cleanup EXIT
 
 ready=false
 for _ in $(seq 1 100); do
-  if curl -fsS "http://$address/" >/dev/null 2>&1 ||
-    curl -sS -X POST -H "content-type: application/json" \
-      --data '{}' "http://$address/v2/pipeline" >/dev/null 2>&1; then
+  status="$(curl -sS -o /dev/null -w '%{http_code}' \
+      -X POST -H "content-type: application/json" \
+      -H "Authorization: Bearer $sync_token" \
+      --data '{}' "http://$address/v2/pipeline" 2>/dev/null || true)"
+  if [[ -n "$status" && "$status" != "000" ]]; then
     ready=true
     break
   fi
@@ -45,7 +49,10 @@ fi
 
 (
   cd "$root/tursogo"
-  if ! MTURSO_SYNC_URL="http://$address" go test -count=1 ./...; then
+  if ! MTURSO_SYNC_URL="http://$address" \
+    MTURSO_SYNC_TOKEN="$sync_token" \
+    GOCACHE="$tmp/go-cache" \
+    go test -count=1 ./...; then
     echo "native server log:" >&2
     cat "$log" >&2
     exit 1

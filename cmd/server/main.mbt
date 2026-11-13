@@ -4,7 +4,7 @@ async fn main {
   if args.length() >= 2 && args[1] == "--serve-native" {
     if args.length() < 4 {
       println(
-        "usage: mturso-server --serve-native <database-path> <loopback-address>",
+        "usage: mturso-server --serve-native <database-path> <address>",
       )
       @env.exit(1)
     }
@@ -15,7 +15,7 @@ async fn main {
   let first = if use_tursodb { 2 } else { 1 }
   if args.length() <= first {
     println(
-      "usage: mturso-server [--tursodb] <database-path> [loopback-address]",
+      "usage: mturso-server [--tursodb] <database-path> [address]",
     )
     @env.exit(1)
   }
@@ -37,7 +37,11 @@ async fn main {
     run_native_server(database_path, address)
     return
   }
-  let config = @srv.SyncServerConfig::new(database_path, address~)
+  let config = @srv.SyncServerConfig::new(
+    database_path,
+    address~,
+    backend=@srv.SyncServerBackend::External,
+  )
   let server = @srv.SyncServer::start(config) catch {
     @mturso.TursoError::SyncError(kind, message) => {
       println(

@@ -26,11 +26,12 @@ func TestSyncBootstrapFromNativeServer(t *testing.T) {
 	if remoteURL == "" {
 		t.Skip("MTURSO_SYNC_URL is not set")
 	}
+	authToken := os.Getenv("MTURSO_SYNC_TOKEN")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	remote := sql.OpenDB(serverless.NewConnector(remoteURL, ""))
+	remote := sql.OpenDB(serverless.NewConnector(remoteURL, authToken))
 	defer remote.Close()
 	if _, err := remote.ExecContext(
 		ctx,
@@ -51,6 +52,7 @@ func TestSyncBootstrapFromNativeServer(t *testing.T) {
 	syncDB, err := turso.NewTursoSyncDb(ctx, turso.TursoSyncDbConfig{
 		Path:              filepath.Join(t.TempDir(), "replica.db"),
 		RemoteUrl:         remoteURL,
+		AuthToken:         authToken,
 		ClientName:        "mturso-sync-test",
 		LongPollTimeoutMs: 100,
 	})
@@ -197,6 +199,7 @@ func TestSyncBootstrapFromNativeServer(t *testing.T) {
 	logicalDB, err := turso.NewTursoSyncDb(ctx, turso.TursoSyncDbConfig{
 		Path:            filepath.Join(t.TempDir(), "logical-replica.db"),
 		RemoteUrl:       remoteURL,
+		AuthToken:       authToken,
 		ClientName:      "mturso-logical-fallback-test",
 		LogicalMvccPull: true,
 	})
@@ -224,12 +227,13 @@ func TestSyncPushToNativeServer(t *testing.T) {
 	if remoteURL == "" {
 		t.Skip("MTURSO_SYNC_URL is not set")
 	}
+	authToken := os.Getenv("MTURSO_SYNC_TOKEN")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	syncURL := traceSyncProxy(t, remoteURL)
 
-	remote := sql.OpenDB(serverless.NewConnector(remoteURL, ""))
+	remote := sql.OpenDB(serverless.NewConnector(remoteURL, authToken))
 	defer remote.Close()
 	if _, err := remote.ExecContext(
 		ctx,
@@ -250,6 +254,7 @@ func TestSyncPushToNativeServer(t *testing.T) {
 	syncDB, err := turso.NewTursoSyncDb(ctx, turso.TursoSyncDbConfig{
 		Path:                    filepath.Join(t.TempDir(), "writer.db"),
 		RemoteUrl:               syncURL,
+		AuthToken:               authToken,
 		ClientName:              "mturso-push-test",
 		PushOperationsThreshold: 1,
 	})
@@ -295,6 +300,7 @@ func TestSyncPushToNativeServer(t *testing.T) {
 	replica, err := turso.NewTursoSyncDb(ctx, turso.TursoSyncDbConfig{
 		Path:       filepath.Join(t.TempDir(), "replica.db"),
 		RemoteUrl:  syncURL,
+		AuthToken:  authToken,
 		ClientName: "mturso-push-replica",
 	})
 	if err != nil {
@@ -322,6 +328,7 @@ func TestSyncPushToNativeServer(t *testing.T) {
 	secondWriter, err := turso.NewTursoSyncDb(ctx, turso.TursoSyncDbConfig{
 		Path:                    filepath.Join(t.TempDir(), "second-writer.db"),
 		RemoteUrl:               syncURL,
+		AuthToken:               authToken,
 		ClientName:              "mturso-push-conflict",
 		PushOperationsThreshold: 1,
 	})
@@ -400,6 +407,7 @@ func TestSyncPushRetriesAfterLostResponse(t *testing.T) {
 	if remoteURL == "" {
 		t.Skip("MTURSO_SYNC_URL is not set")
 	}
+	authToken := os.Getenv("MTURSO_SYNC_TOKEN")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -407,7 +415,7 @@ func TestSyncPushRetriesAfterLostResponse(t *testing.T) {
 	dropPush.Store(true)
 	proxyURL := lossyPushProxy(t, remoteURL, &dropPush)
 
-	remote := sql.OpenDB(serverless.NewConnector(remoteURL, ""))
+	remote := sql.OpenDB(serverless.NewConnector(remoteURL, authToken))
 	defer remote.Close()
 	if _, err := remote.ExecContext(
 		ctx,
@@ -428,6 +436,7 @@ func TestSyncPushRetriesAfterLostResponse(t *testing.T) {
 	syncDB, err := turso.NewTursoSyncDb(ctx, turso.TursoSyncDbConfig{
 		Path:       filepath.Join(t.TempDir(), "retry.db"),
 		RemoteUrl:  proxyURL,
+		AuthToken:  authToken,
 		ClientName: "mturso-push-retry",
 	})
 	if err != nil {
