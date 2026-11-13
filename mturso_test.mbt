@@ -87,31 +87,25 @@ async test "query error raises TursoError::QueryError" {
   defer db.close()
   let conn = db.connect()
   defer conn.close()
-  let mut got = false
-  try ignore(conn.query("select * from no_such_table")) catch {
-    @mturso.TursoError::QueryError(msg) => {
-      assert_true(msg.length() > 0)
-      got = true
-    }
-    _ => ()
-  } noraise {
-    _ => ()
+  let error = @test.expect_error_async(
+    () => conn.query("select * from no_such_table"),
+  )
+  match error {
+    @mturso.TursoError::QueryError(message) =>
+      assert_true(message.contains("no such table"))
+    error => fail("unexpected error: \{@debug.to_string(error)}")
   }
-  assert_true(got)
 
   ignore(conn.execute("create table unique_t(id integer primary key)"))
   ignore(conn.execute("insert into unique_t values (1)"))
-  let mut constraint = false
-  try ignore(conn.execute("insert into unique_t values (1)")) catch {
-    @mturso.TursoError::QueryError(msg) => {
-      assert_true(msg.length() > 0)
-      constraint = true
-    }
-    _ => ()
-  } noraise {
-    _ => ()
+  let error = @test.expect_error_async(
+    () => conn.execute("insert into unique_t values (1)"),
+  )
+  match error {
+    @mturso.TursoError::QueryError(message) =>
+      assert_true(message.contains("UNIQUE constraint failed"))
+    error => fail("unexpected error: \{@debug.to_string(error)}")
   }
-  assert_true(constraint)
 }
 
 ///|
@@ -201,16 +195,14 @@ async test "类型化行集：整数/浮点/文本/blob/null 按类型取到，�
   assert_true(row.value(4) == @mturso.Value::Null)
   assert_true(!rows.has_next())
 
-  let mut missing = false
-  try {
+  let error = @test.expect_error(() => {
     let _missing : String = row.get_by_name("missing")
-  } catch {
-    @mturso.TursoError::QueryError(_) => missing = true
-    _ => ()
-  } noraise {
-    _ => ()
+  })
+  match error {
+    @mturso.TursoError::QueryError(message) =>
+      assert_eq(message, "column not found: missing")
+    error => fail("unexpected error: \{@debug.to_string(error)}")
   }
-  assert_true(missing)
 }
 
 ///|
@@ -291,14 +283,11 @@ async test "fetch / fetch_one：元组建行 + NoRows" {
   assert_true(one.0 == 2)
   assert_true(one.1 == "b")
 
-  let mut no_rows = false
-  try ignore(fetch_one_absent(conn)) catch {
-    @mturso.TursoError::NoRows => no_rows = true
-    _ => ()
-  } noraise {
-    _ => ()
+  let error = @test.expect_error_async(() => fetch_one_absent(conn))
+  match error {
+    @mturso.TursoError::NoRows => ()
+    error => fail("unexpected error: \{@debug.to_string(error)}")
   }
-  assert_true(no_rows)
 }
 
 ///|
@@ -307,30 +296,29 @@ async test "query 遇到多语句明确报错" {
   defer db.close()
   let conn = db.connect()
   defer conn.close()
-  let mut got = false
-  try ignore(conn.query("select 1; select 2")) catch {
-    _ => got = true
-  } noraise {
-    _ => ()
+  let error = @test.expect_error_async(
+    () => conn.query("select 1; select 2"),
+  )
+  match error {
+    @mturso.TursoError::QueryError(message) =>
+      assert_eq(
+        message,
+        "query() accepts a single statement; use execute() for scripts",
+      )
+    error => fail("unexpected error: \{@debug.to_string(error)}")
   }
-  assert_true(got)
 }
 
 async test "用已关闭的连接 → TursoError::ConnectionError" {
   let db = @mturso.Database::open(":memory:")
   let conn = db.connect()
   conn.close()
-  let mut got = false
-  try ignore(conn.exec_blocking("select 1")) catch {
-    @mturso.TursoError::ConnectionError(msg) => {
-      assert_true(msg.length() > 0)
-      got = true
-    }
-    _ => ()
-  } noraise {
-    _ => ()
+  let error = @test.expect_error(() => conn.exec_blocking("select 1"))
+  match error {
+    @mturso.TursoError::ConnectionError(message) =>
+      assert_eq(message, "connection is closed")
+    error => fail("unexpected error: \{@debug.to_string(error)}")
   }
-  assert_true(got)
   db.close()
 }
 
@@ -357,23 +345,20 @@ async test "事务：commit / rollback / begin_func / 重复 commit" {
   assert_true(one_int(c2, "select count(*) from t") == 1L)
 
   // 重复 commit 报错
-  let mut twice = false
-  try ignore(tx.commit()) catch {
-    _ => twice = true
-  } noraise {
-    _ => ()
+  let error = @test.expect_error_async(() => tx.commit())
+  match error {
+    @mturso.TursoError::QueryError(message) =>
+      assert_eq(message, "transaction already finished")
+    error => fail("unexpected error: \{@debug.to_string(error)}")
   }
-  assert_true(twice)
 
   // 已结束事务不能再执行语句
-  let mut finished = false
-  try ignore(tx.execute("select 1")) catch {
-    @mturso.TursoError::QueryError(_) => finished = true
-    _ => ()
-  } noraise {
-    _ => ()
+  let error = @test.expect_error_async(() => tx.execute("select 1"))
+  match error {
+    @mturso.TursoError::QueryError(message) =>
+      assert_eq(message, "transaction already finished")
+    error => fail("unexpected error: \{@debug.to_string(error)}")
   }
-  assert_true(finished)
 
   // rollback（显式 Immediate 模式）
   let tx2 = c1.begin_tx(
@@ -433,38 +418,40 @@ async test "#5 begin_func 错误回滚、read_only 事务" {
   ignore(conn.execute("create table t(v integer)"))
   ignore(conn.execute("insert into t values (1)"))
 
-  let mut original = false
-  try ignore(
-    @mturso.begin_func(
-      conn,
-      async fn(tx) -> Unit raise @mturso.TursoError {
-        ignore(tx.execute("insert into t values (2)"))
-        ignore(tx.execute("insert into missing values (1)"))
-      },
-    ),
-  ) catch {
-    @mturso.TursoError::QueryError(msg) =>
-      original = msg.contains("no such table")
-    _ => ()
-  } noraise {
-    _ => ()
+  let error = @test.expect_error_async(() => {
+    ignore(
+      @mturso.begin_func(
+        conn,
+        async fn(tx) -> Unit raise @mturso.TursoError {
+          ignore(tx.execute("insert into t values (2)"))
+          ignore(tx.execute("insert into missing values (1)"))
+        },
+      ),
+    )
+  })
+  match error {
+    @mturso.TursoError::QueryError(message) =>
+      assert_true(message.contains("no such table"))
+    error => fail("unexpected error: \{@debug.to_string(error)}")
   }
-  assert_true(original)
   assert_true(one_int(conn, "select count(*) from t") == 1L)
 
   let tx = conn.begin_tx(opts=@mturso.TxOptions::{
     mode: None,
     read_only: Some(true),
   })
-  let mut was_readonly = false
-  try ignore(tx.execute("insert into t values (3)")) catch {
-    @mturso.TursoError::QueryError(_) => was_readonly = true
-    _ => ()
-  } noraise {
-    _ => ()
+  let error = @test.expect_error_async(
+    () => tx.execute("insert into t values (3)"),
+  )
+  match error {
+    @mturso.TursoError::QueryError(message) =>
+      assert_eq(
+        message,
+        "Parse error: Cannot execute write statement in query_only mode",
+      )
+    error => fail("unexpected error: \{@debug.to_string(error)}")
   }
   tx.rollback()
-  assert_true(was_readonly)
   ignore(conn.execute("insert into t values (4)"))
   assert_true(one_int(conn, "select count(*) from t") == 2L)
 
@@ -494,21 +481,18 @@ async test "#3 错误分型：WAL 写锁 -> Busy" {
     mode: Some(@mturso.TxMode::Immediate),
     read_only: None,
   })
-  let mut busy = false
-  try {
+  let error = @test.expect_error_async(() => {
     let tx2 = c2.begin_tx(opts=@mturso.TxOptions::{
       mode: Some(@mturso.TxMode::Immediate),
       read_only: None,
     })
     tx2.rollback()
-  } catch {
-    @mturso.TursoError::Busy(_) => busy = true
-    _ => ()
-  } noraise {
-    _ => ()
+  })
+  match error {
+    @mturso.TursoError::Busy(message) => assert_true(message.length() > 0)
+    error => fail("unexpected error: \{@debug.to_string(error)}")
   }
   tx1.rollback()
-  assert_true(busy)
 }
 
 ///|
@@ -527,20 +511,17 @@ async test "#3/#5 MVCC 并发写冲突 -> Conflict" {
 
   let tx1 = c1.begin_tx()
   let tx2 = c2.begin_tx()
-  let mut conflict = false
-  try {
+  let error = @test.expect_error_async(() => {
     ignore(tx1.execute("update t set v = 1 where id = 1"))
     ignore(tx2.execute("update t set v = 2 where id = 1"))
     tx1.commit()
     tx2.commit()
-  } catch {
-    @mturso.TursoError::Conflict(_) => conflict = true
-    @mturso.TursoError::QueryError(msg) => abort("unexpected query error: \{msg}")
-    _ => ()
-  } noraise {
-    _ => ()
+  })
+  match error {
+    @mturso.TursoError::Conflict(message) =>
+      assert_true(message.length() > 0)
+    error => fail("unexpected error: \{@debug.to_string(error)}")
   }
-  assert_true(conflict)
 }
 
 ///|
@@ -589,12 +570,7 @@ async test "#6 retry_tx 在真实 MVCC 冲突后重试成功" {
     }
     @async.sleep(40)
     tx1.commit()
-  }) catch {
-    @mturso.TursoError::QueryError(msg) => abort(msg)
-    _ => ()
-  } noraise {
-    _ => ()
-  }
+  })
 
   assert_true(done.val)
   assert_true(attempts.val >= 2)
@@ -688,10 +664,11 @@ async test "#7 池上隐式 acquire/release + 池事务 + 统计" {
   let one = @mturso.Database::open(":memory:", max_conns=1)
   defer one.close()
   ignore(one.execute("create table t(x integer)"))
-  try ignore(one.query("select * from missing")) catch {
-    _ => ()
-  } noraise {
-    _ => ()
+  let error = @test.expect_error_async(() => one.query("select * from missing"))
+  match error {
+    @mturso.TursoError::QueryError(message) =>
+      assert_true(message.contains("no such table"))
+    error => fail("unexpected error: \{@debug.to_string(error)}")
   }
   assert_true(one.query_one("select 1").get(0) == 1)
 }
@@ -756,14 +733,12 @@ async test "观测方法：is_closed / last_insert_rowid / sqlite_version" {
   assert_true(conn.is_closed())
   conn.close() // 幂等
 
-  let mut got = false
-  try ignore(conn.query("select 1")) catch {
-    @mturso.TursoError::ConnectionError(_) => got = true
-    _ => ()
-  } noraise {
-    _ => ()
+  let error = @test.expect_error_async(() => conn.query("select 1"))
+  match error {
+    @mturso.TursoError::ConnectionError(message) =>
+      assert_eq(message, "connection is closed")
+    error => fail("unexpected error: \{@debug.to_string(error)}")
   }
-  assert_true(got)
 }
 
 ///|
@@ -778,14 +753,12 @@ async test "#7 Connection::open 持有私有 max_conns=1 Database" {
   assert_true(conn.is_closed())
   conn.close()
 
-  let mut closed = false
-  try ignore(conn.query("select 1")) catch {
-    @mturso.TursoError::ConnectionError(_) => closed = true
-    _ => ()
-  } noraise {
-    _ => ()
+  let error = @test.expect_error_async(() => conn.query("select 1"))
+  match error {
+    @mturso.TursoError::ConnectionError(message) =>
+      assert_eq(message, "connection is closed")
+    error => fail("unexpected error: \{@debug.to_string(error)}")
   }
-  assert_true(closed)
 
   let reopened = @mturso.Connection::open(path)
   assert_true(one_int(reopened, "select x from t") == 42L)

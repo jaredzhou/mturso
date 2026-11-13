@@ -18,6 +18,10 @@ import {
   "moonbitlang/protobuf",
 }
 
+import {
+  "moonbitlang/core/test",
+} for "test"
+
 options(
   "allow-experimental-packages": [
     "moonbitlang/core/async",

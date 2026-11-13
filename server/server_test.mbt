@@ -42,51 +42,68 @@ test "sync server validates proxy and authentication combinations" {
     address="0.0.0.0:8080",
     auth=@server.SyncServerAuth::BearerToken("secret"),
   )
-  let missing_proxy_error = try missing_proxy.validate() catch {
-    @mturso.TursoError::SyncError(_, message) => message
-    _ => ""
-  } noraise {
-    _ => ""
+  let error = @test.expect_error(() => missing_proxy.validate())
+  match error {
+    @mturso.TursoError::SyncError(
+      @mturso.SyncErrorKind::Protocol,
+      message,
+    ) =>
+      assert_eq(
+        message,
+        "non-loopback sync server binds require external_tls_proxy mode",
+      )
+    error => fail("unexpected error: \{@debug.to_string(error)}")
   }
-  assert_true(missing_proxy_error.contains("external_tls_proxy"))
 
   let missing_auth = @server.SyncServerConfig::new(
     ":memory:",
     address="0.0.0.0:8080",
     external_tls_proxy=true,
   )
-  let missing_auth_error = try missing_auth.validate() catch {
-    @mturso.TursoError::SyncError(_, message) => message
-    _ => ""
-  } noraise {
-    _ => ""
+  let error = @test.expect_error(() => missing_auth.validate())
+  match error {
+    @mturso.TursoError::SyncError(
+      @mturso.SyncErrorKind::Protocol,
+      message,
+    ) =>
+      assert_eq(
+        message,
+        "external TLS proxy mode requires Bearer authentication",
+      )
+    error => fail("unexpected error: \{@debug.to_string(error)}")
   }
-  assert_true(missing_auth_error.contains("Bearer authentication"))
 
   let external_auth = @server.SyncServerConfig::new(
     ":memory:",
     backend=@server.SyncServerBackend::External,
     auth=@server.SyncServerAuth::BearerToken("secret"),
   )
-  let external_auth_error = try external_auth.validate() catch {
-    @mturso.TursoError::SyncError(_, message) => message
-    _ => ""
-  } noraise {
-    _ => ""
+  let error = @test.expect_error(() => external_auth.validate())
+  match error {
+    @mturso.TursoError::SyncError(
+      @mturso.SyncErrorKind::Protocol,
+      message,
+    ) =>
+      assert_eq(
+        message,
+        "external tursodb backend does not support built-in authentication",
+      )
+    error => fail("unexpected error: \{@debug.to_string(error)}")
   }
-  assert_true(external_auth_error.contains("does not support built-in"))
 
   let empty_token = @server.SyncServerConfig::new(
     ":memory:",
     auth=@server.SyncServerAuth::BearerToken(""),
   )
-  let empty_token_error = try empty_token.validate() catch {
-    @mturso.TursoError::SyncError(_, message) => message
-    _ => ""
-  } noraise {
-    _ => ""
+  let error = @test.expect_error(() => empty_token.validate())
+  match error {
+    @mturso.TursoError::SyncError(
+      @mturso.SyncErrorKind::Protocol,
+      message,
+    ) =>
+      assert_eq(message, "Bearer token must not be empty")
+    error => fail("unexpected error: \{@debug.to_string(error)}")
   }
-  assert_true(empty_token_error.contains("must not be empty"))
 }
 
 ///|
@@ -96,17 +113,15 @@ async test "sync server rejects non-loopback addresses" {
     backend=@server.SyncServerBackend::External,
     address="0.0.0.0:8080",
   )
-  let mut rejected = false
-  try ignore(@server.SyncServer::start(config)) catch {
-    @mturso.TursoError::SyncError(@mturso.SyncErrorKind::Protocol, message) => {
-      assert_true(message.contains("loopback"))
-      rejected = true
-    }
-    _ => ()
-  } noraise {
-    _ => ()
+  let error = @test.expect_error_async(() => @server.SyncServer::start(config))
+  match error {
+    @mturso.TursoError::SyncError(
+      @mturso.SyncErrorKind::Protocol,
+      message,
+    ) =>
+      assert_eq(message, "external tursodb backend only supports loopback addresses")
+    error => fail("unexpected error: \{@debug.to_string(error)}")
   }
-  assert_true(rejected)
 }
 
 ///|
@@ -117,17 +132,14 @@ async test "sync server uses only a matching tursodb version" {
     startup_timeout_ms=100,
     backend=@server.SyncServerBackend::External,
   )
-  let mut rejected = false
-  try ignore(@server.SyncServer::start(config)) catch {
-    @mturso.TursoError::SyncError(@mturso.SyncErrorKind::Internal, message) => {
-      assert_true(message.contains("v0.8.2"))
-      rejected = true
-    }
-    _ => ()
-  } noraise {
-    _ => ()
+  let error = @test.expect_error_async(() => @server.SyncServer::start(config))
+  match error {
+    @mturso.TursoError::SyncError(
+      @mturso.SyncErrorKind::Internal,
+      message,
+    ) => assert_true(message.contains("v0.8.2"))
+    error => fail("unexpected error: \{@debug.to_string(error)}")
   }
-  assert_true(rejected)
 }
 
 ///|
@@ -171,17 +183,14 @@ async test "sync server reports child early exit" {
     startup_timeout_ms=1_000,
     backend=@server.SyncServerBackend::External,
   )
-  let mut rejected = false
-  try ignore(@server.SyncServer::start(config)) catch {
-    @mturso.TursoError::SyncError(@mturso.SyncErrorKind::Internal, message) => {
-      assert_true(message.contains("exited"))
-      rejected = true
-    }
-    _ => ()
-  } noraise {
-    _ => ()
+  let error = @test.expect_error_async(() => @server.SyncServer::start(config))
+  match error {
+    @mturso.TursoError::SyncError(
+      @mturso.SyncErrorKind::Internal,
+      message,
+    ) => assert_true(message.contains("exited"))
+    error => fail("unexpected error: \{@debug.to_string(error)}")
   }
-  assert_true(rejected)
 }
 
 ///|
@@ -203,17 +212,14 @@ async test "sync server reports a bind conflict" {
     startup_timeout_ms=1_000,
     backend=@server.SyncServerBackend::External,
   )
-  let mut rejected = false
-  try ignore(@server.SyncServer::start(config)) catch {
-    @mturso.TursoError::SyncError(@mturso.SyncErrorKind::Internal, message) => {
-      assert_true(message.contains("exited"))
-      rejected = true
-    }
-    _ => ()
-  } noraise {
-    _ => ()
+  let error = @test.expect_error_async(() => @server.SyncServer::start(config))
+  match error {
+    @mturso.TursoError::SyncError(
+      @mturso.SyncErrorKind::Internal,
+      message,
+    ) => assert_true(message.contains("exited"))
+    error => fail("unexpected error: \{@debug.to_string(error)}")
   }
-  assert_true(rejected)
 }
 
 ///|
@@ -260,25 +266,13 @@ async test "native pipeline executes SQL and parameters" {
   }
   let dir = @fs.tmpdir(prefix="mturso-native-pipeline")
   defer @fs.rmdir(dir, recursive=true)
-  let server = try
-    @server.SyncServer::start(
-      @server.SyncServerConfig::new(
-        dir + "/pipeline.db",
-        backend=@server.SyncServerBackend::Native,
-        native_executable=Some(executable),
-      ),
-    )
-  catch {
-    @mturso.TursoError::SyncError(kind, message) => {
-      println(
-        "native server start failed (\{@debug.to_string(kind)}): \{message}",
-      )
-      raise @mturso.sync_error(kind, message)
-    }
-    _ => fail("unexpected native server startup error type")
-  } noraise {
-    value => value
-  }
+  let server = @server.SyncServer::start(
+    @server.SyncServerConfig::new(
+      dir + "/pipeline.db",
+      backend=@server.SyncServerBackend::Native,
+      native_executable=Some(executable),
+    ),
+  )
   defer @async.protect_from_cancel(async fn() { server.stop() })
   let body =
     #|{"baton":null,"requests":[
@@ -438,24 +432,23 @@ async test "native sync server enforces bearer authentication end to end" {
   let stats = first.stats()
   assert_true(stats.revision.length() > 0)
 
-  let unauthorized = try
-    @mturso.SyncDatabase::open(
-      @mturso.SyncConfig::new(
-        dir + "/unauthorized.db",
-        remote_url=server.base_url(),
-        long_poll_timeout_ms=100,
+  let error = @test.expect_error_async(
+    () =>
+      @mturso.SyncDatabase::open(
+        @mturso.SyncConfig::new(
+          dir + "/unauthorized.db",
+          remote_url=server.base_url(),
+          long_poll_timeout_ms=100,
+        ),
       ),
-    )
-  catch {
-    @mturso.TursoError::SyncError(@mturso.SyncErrorKind::Auth, _) => {
-      return
-    }
-    error => fail("expected auth error, got \{@debug.to_string(error)}")
-  } noraise {
-    value => value
+  )
+  match error {
+    @mturso.TursoError::SyncError(
+      @mturso.SyncErrorKind::Auth,
+      message,
+    ) => assert_true(message.contains("authentication"))
+    error => fail("unexpected error: \{@debug.to_string(error)}")
   }
-  unauthorized.close()
-  fail("sync database without a bearer token unexpectedly opened")
 }
 
 ///|
@@ -476,46 +469,22 @@ async test "native sync server bootstraps a file-backed database" {
   seed.close()
   remote.close()
 
-  let server = try
-    @server.SyncServer::start(
-      @server.SyncServerConfig::new(
-        remote_path,
-        backend=@server.SyncServerBackend::Native,
-        native_executable=Some(executable),
-      ),
-    )
-  catch {
-    @mturso.TursoError::SyncError(kind, message) => {
-      println(
-        "native server start failed (\{@debug.to_string(kind)}): \{message}",
-      )
-      raise @mturso.sync_error(kind, message)
-    }
-    _ => fail("unexpected native server startup error type")
-  } noraise {
-    value => value
-  }
+  let server = @server.SyncServer::start(
+    @server.SyncServerConfig::new(
+      remote_path,
+      backend=@server.SyncServerBackend::Native,
+      native_executable=Some(executable),
+    ),
+  )
   defer @async.protect_from_cancel(async fn() { server.stop() })
 
-  let replica = try
-    @mturso.SyncDatabase::open(
-      @mturso.SyncConfig::new(
-        dir + "/local.db",
-        remote_url=server.base_url(),
-        long_poll_timeout_ms=100,
-      ),
-    )
-  catch {
-    @mturso.TursoError::SyncError(kind, message) => {
-      println(
-        "native sync bootstrap failed (\{@debug.to_string(kind)}): \{message}",
-      )
-      raise @mturso.sync_error(kind, message)
-    }
-    _ => fail("unexpected sync bootstrap error type")
-  } noraise {
-    value => value
-  }
+  let replica = @mturso.SyncDatabase::open(
+    @mturso.SyncConfig::new(
+      dir + "/local.db",
+      remote_url=server.base_url(),
+      long_poll_timeout_ms=100,
+    ),
+  )
   defer replica.close()
   let conn = replica.connect()
   defer conn.close()

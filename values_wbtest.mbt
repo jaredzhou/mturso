@@ -42,13 +42,11 @@ test "往返：内建类型 ToValue -> FromValue" {
 
 ///|
 test "类型不符时抛 ValueError（不是 panic、不是静默错值）" {
-  let mut got = false
-  try ignore(decode_int(@value.Value::Text("nope"))) catch {
-    ValueError::ValueError(_) => got = true
-  } noraise {
-    _ => ()
+  let error = @test.expect_error(() => decode_int(@value.Value::Text("nope")))
+  match error {
+    ValueError::ValueError(message) =>
+      assert_eq(message, "expected Value::Integer")
   }
-  assert_true(got)
 }
 
 ///|
@@ -67,13 +65,15 @@ test "Timestamp：ISO 8601 文本；unix() / from_unix() 给秒" {
   assert_true(Timestamp("2023-11-14 22:13:20").unix() == 1700000000L)
   assert_true(Timestamp("2023-11-14T22:13:20.500Z").unix() == 1700000000L)
   // 不支持的写法（带时区偏移）要报错
-  let mut got = false
-  try ignore(Timestamp("2023-11-14T22:13:20+08:00").unix()) catch {
-    ValueError::ValueError(_) => got = true
-  } noraise {
-    _ => ()
+  let timestamp = "2023-11-14T22:13:20+08:00"
+  let error = @test.expect_error(() => Timestamp(timestamp).unix())
+  match error {
+    ValueError::ValueError(message) =>
+      assert_eq(
+        message,
+        "expected ISO 8601 'YYYY-MM-DDTHH:MM:SS[Z]', got: \{timestamp}",
+      )
   }
-  assert_true(got)
 }
 
 ///|

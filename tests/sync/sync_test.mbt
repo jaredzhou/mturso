@@ -12,15 +12,7 @@ async test "sync database opens offline when bootstrap is disabled" {
     remote_url="http://127.0.0.1:1",
     bootstrap_if_empty=false,
   )
-  let db = try @mturso.SyncDatabase::open(config) catch {
-    @mturso.TursoError::SyncError(kind, message) => {
-      println("sync bootstrap failed (\{@debug.to_string(kind)}): \{message}")
-      raise @mturso.sync_error(kind, message)
-    }
-    _ => fail("unexpected sync bootstrap error type")
-  } noraise {
-    value => value
-  }
+  let db = @mturso.SyncDatabase::open(config)
   defer db.close()
   let conn = db.connect()
   defer conn.close()
@@ -68,17 +60,7 @@ async test "sync database bootstraps remote data" {
     dir + "/local.db",
     remote_url=server.base_url(),
   )
-  let db = try @mturso.SyncDatabase::open(config) catch {
-    @mturso.TursoError::SyncError(kind, message) => {
-      println(
-        "remote sync bootstrap failed (\{@debug.to_string(kind)}): \{message}",
-      )
-      raise @mturso.sync_error(kind, message)
-    }
-    _ => fail("unexpected remote sync bootstrap error type")
-  } noraise {
-    value => value
-  }
+  let db = @mturso.SyncDatabase::open(config)
   defer db.close()
   let conn = db.connect()
   defer conn.close()
@@ -112,17 +94,20 @@ async test "sync database rejects an invalid remote URL" {
     dir + "/local.db",
     remote_url="not-a-url",
   )
-  let mut rejected = false
-  try ignore(@mturso.SyncDatabase::open(config)) catch {
-    @mturso.TursoError::SyncError(@mturso.SyncErrorKind::Protocol, message) => {
-      assert_true(message.contains("remote_url"))
-      rejected = true
-    }
-    _ => ()
-  } noraise {
-    _ => ()
+  let error = @test.expect_error_async(
+    () => @mturso.SyncDatabase::open(config),
+  )
+  match error {
+    @mturso.TursoError::SyncError(
+      @mturso.SyncErrorKind::Protocol,
+      message,
+    ) =>
+      assert_eq(
+        message,
+        "remote_url must start with http://, https://, libsql://, or turso://",
+      )
+    error => fail("unexpected error: \{@debug.to_string(error)}")
   }
-  assert_true(rejected)
 }
 
 ///|
@@ -135,17 +120,16 @@ async test "sync database reports network failure during bootstrap" {
     dir + "/local.db",
     remote_url="http://127.0.0.1:1",
   )
-  let mut rejected = false
-  try ignore(@mturso.SyncDatabase::open(config)) catch {
-    @mturso.TursoError::SyncError(@mturso.SyncErrorKind::Network, message) => {
-      assert_true(message.length() > 0)
-      rejected = true
-    }
-    _ => ()
-  } noraise {
-    _ => ()
+  let error = @test.expect_error_async(
+    () => @mturso.SyncDatabase::open(config),
+  )
+  match error {
+    @mturso.TursoError::SyncError(
+      @mturso.SyncErrorKind::Network,
+      message,
+    ) => assert_true(message.length() > 0)
+    error => fail("unexpected error: \{@debug.to_string(error)}")
   }
-  assert_true(rejected)
 }
 
 ///|
@@ -185,24 +169,10 @@ async test "sync database pushes committed local changes" {
   )
   ignore(source_conn.execute("delete from notes where body = 'delete-me'"))
   source.push()
-  let push_failures : Ref[Int] = Ref(0)
   @async.with_task_group(group => {
-    group.spawn_bg(() => {
-      try source.push() catch {
-        _ => push_failures.val = push_failures.val + 1
-      } noraise {
-        _ => ()
-      }
-    })
-    group.spawn_bg(() => {
-      try source.push() catch {
-        _ => push_failures.val = push_failures.val + 1
-      } noraise {
-        _ => ()
-      }
-    })
+    group.spawn_bg(() => source.push())
+    group.spawn_bg(() => source.push())
   })
-  assert_true(push_failures.val == 0)
   source_conn.close()
   source.close()
 
@@ -254,17 +224,14 @@ async test "sync push failure keeps local changes for retry" {
 
   server.stop()
   ignore(source_conn.execute("insert into notes(body) values ('offline')"))
-  let mut network_error = false
-  try source.push() catch {
-    @mturso.TursoError::SyncError(@mturso.SyncErrorKind::Network, message) => {
-      assert_true(message.length() > 0)
-      network_error = true
-    }
-    _ => ()
-  } noraise {
-    _ => ()
+  let error = @test.expect_error_async(() => source.push())
+  match error {
+    @mturso.TursoError::SyncError(
+      @mturso.SyncErrorKind::Network,
+      message,
+    ) => assert_true(message.length() > 0)
+    error => fail("unexpected error: \{@debug.to_string(error)}")
   }
-  assert_true(network_error)
 
   let restarted = @server.SyncServer::start(
     @server.SyncServerConfig::new(
@@ -367,17 +334,14 @@ async test "sync pull applies remote changes and replays local changes" {
   )
   writer.push()
   server.stop()
-  let mut network_error = false
-  try source.pull() catch {
-    @mturso.TursoError::SyncError(@mturso.SyncErrorKind::Network, message) => {
-      assert_true(message.length() > 0)
-      network_error = true
-    }
-    _ => ()
-  } noraise {
-    _ => ()
+  let error = @test.expect_error_async(() => source.pull())
+  match error {
+    @mturso.TursoError::SyncError(
+      @mturso.SyncErrorKind::Network,
+      message,
+    ) => assert_true(message.length() > 0)
+    error => fail("unexpected error: \{@debug.to_string(error)}")
   }
-  assert_true(network_error)
   let before_restart : Array[String] = source_conn.fetch(
     "select body from notes order by id",
   )
@@ -398,24 +362,10 @@ async test "sync pull applies remote changes and replays local changes" {
   assert_true(after_restart.length() == 4)
   assert_true(after_restart[3] == "after-restart")
 
-  let operation_failures : Ref[Int] = Ref(0)
   @async.with_task_group(group => {
-    group.spawn_bg(() => {
-      try ignore(source.pull()) catch {
-        _ => operation_failures.val = operation_failures.val + 1
-      } noraise {
-        _ => ()
-      }
-    })
-    group.spawn_bg(() => {
-      try source.push() catch {
-        _ => operation_failures.val = operation_failures.val + 1
-      } noraise {
-        _ => ()
-      }
-    })
+    group.spawn_bg(() => ignore(source.pull()))
+    group.spawn_bg(() => source.push())
   })
-  assert_true(operation_failures.val == 0)
 }
 
 ///|
@@ -502,38 +452,32 @@ async test "sync database close rejects new work while draining operations" {
     @async.sleep(50)
     source.close()
     assert_true(source.is_closed())
-    let mut push_rejected = false
-    try source.push() catch {
-      @mturso.TursoError::ConnectionError(_) => push_rejected = true
-      _ => ()
-    } noraise {
-      _ => ()
+    let error = @test.expect_error_async(() => source.push())
+    match error {
+      @mturso.TursoError::ConnectionError(message) =>
+        assert_eq(message, "sync database is closed")
+      error => fail("unexpected error: \{@debug.to_string(error)}")
     }
-    assert_true(push_rejected)
-    let mut stats_rejected = false
-    try ignore(source.stats()) catch {
-      @mturso.TursoError::ConnectionError(_) => stats_rejected = true
-      _ => ()
-    } noraise {
-      _ => ()
+    let error = @test.expect_error_async(() => source.stats())
+    match error {
+      @mturso.TursoError::ConnectionError(message) =>
+        assert_eq(message, "sync database is closed")
+      error => fail("unexpected error: \{@debug.to_string(error)}")
     }
-    assert_true(stats_rejected)
-    let mut checkpoint_rejected = false
-    try source.checkpoint() catch {
-      @mturso.TursoError::ConnectionError(_) => checkpoint_rejected = true
-      _ => ()
-    } noraise {
-      _ => ()
+    let error = @test.expect_error_async(() => source.checkpoint())
+    match error {
+      @mturso.TursoError::ConnectionError(message) =>
+        assert_eq(message, "sync database is closed")
+      error => fail("unexpected error: \{@debug.to_string(error)}")
     }
-    assert_true(checkpoint_rejected)
-    let mut connection_rejected = false
-    try ignore(conn.execute("select 1")) catch {
-      @mturso.TursoError::ConnectionError(_) => connection_rejected = true
-      _ => ()
-    } noraise {
-      _ => ()
+    let error = @test.expect_error_async(
+      () => conn.execute("select 1"),
+    )
+    match error {
+      @mturso.TursoError::ConnectionError(message) =>
+        assert_eq(message, "connection is not open")
+      error => fail("unexpected error: \{@debug.to_string(error)}")
     }
-    assert_true(connection_rejected)
   })
   assert_true(pulled.val == Some(false))
   conn.close()

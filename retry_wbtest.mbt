@@ -43,23 +43,22 @@ async test "retry_tx：只重试 Conflict/Busy，不可重试立即冒泡" {
 
   // 不可重试的错误立即冒泡，且只执行一次
   let attempts3 : Ref[Int] = { val: 0, }
-  let mut got = false
-  try ignore(
-    retry_tx(
-      conn,
-      async fn(_tx) -> Int raise TursoError {
-        @async.sleep(0)
-        attempts3.val = attempts3.val + 1
-        raise TursoError::QueryError("no")
-      },
-    ),
-  ) catch {
-    TursoError::QueryError(_) => got = true
-    _ => ()
-  } noraise {
-    _ => ()
+  let error = @test.expect_error_async(() => {
+    ignore(
+      retry_tx(
+        conn,
+        async fn(_tx) -> Int raise TursoError {
+          @async.sleep(0)
+          attempts3.val = attempts3.val + 1
+          raise TursoError::QueryError("no")
+        },
+      ),
+    )
+  })
+  match error {
+    TursoError::QueryError(message) => assert_eq(message, "no")
+    error => fail("unexpected error: \{@debug.to_string(error)}")
   }
-  assert_true(got)
   assert_true(attempts3.val == 1)
 }
 
@@ -71,45 +70,53 @@ async test "retry_tx：attempts 与 budget 都有硬上限" {
   defer conn.close()
 
   let attempts : Ref[Int] = { val: 0, }
-  let mut exhausted = false
-  try ignore(
-    retry_tx(
-      conn,
-      async fn(_tx) -> Unit raise TursoError {
-        @async.sleep(0)
-        attempts.val = attempts.val + 1
-        raise TursoError::Conflict("still conflicted")
-      },
-      opts={ attempts: 3, base_delay_ms: 0, max_delay_ms: 0, budget_ms: None },
-    ),
-  ) catch {
-    TursoError::Conflict(_) => exhausted = true
-    _ => ()
-  } noraise {
-    _ => ()
+  let error = @test.expect_error_async(() => {
+    ignore(
+      retry_tx(
+        conn,
+        async fn(_tx) -> Unit raise TursoError {
+          @async.sleep(0)
+          attempts.val = attempts.val + 1
+          raise TursoError::Conflict("still conflicted")
+        },
+        opts={
+          attempts: 3,
+          base_delay_ms: 0,
+          max_delay_ms: 0,
+          budget_ms: None,
+        },
+      ),
+    )
+  })
+  match error {
+    TursoError::Conflict(message) => assert_eq(message, "still conflicted")
+    error => fail("unexpected error: \{@debug.to_string(error)}")
   }
-  assert_true(exhausted)
   assert_true(attempts.val == 3)
 
   let budget_attempts : Ref[Int] = { val: 0, }
-  let mut budget_exhausted = false
-  try ignore(
-    retry_tx(
-      conn,
-      async fn(_tx) -> Unit raise TursoError {
-        budget_attempts.val = budget_attempts.val + 1
-        @async.sleep(2)
-        raise TursoError::Conflict("budget")
-      },
-      opts={ attempts: 10, base_delay_ms: 0, max_delay_ms: 0, budget_ms: Some(1) },
-    ),
-  ) catch {
-    TursoError::Conflict(_) => budget_exhausted = true
-    _ => ()
-  } noraise {
-    _ => ()
+  let error = @test.expect_error_async(() => {
+    ignore(
+      retry_tx(
+        conn,
+        async fn(_tx) -> Unit raise TursoError {
+          budget_attempts.val = budget_attempts.val + 1
+          @async.sleep(2)
+          raise TursoError::Conflict("budget")
+        },
+        opts={
+          attempts: 10,
+          base_delay_ms: 0,
+          max_delay_ms: 0,
+          budget_ms: Some(1),
+        },
+      ),
+    )
+  })
+  match error {
+    TursoError::Conflict(message) => assert_eq(message, "budget")
+    error => fail("unexpected error: \{@debug.to_string(error)}")
   }
-  assert_true(budget_exhausted)
   assert_true(budget_attempts.val == 1)
 }
 

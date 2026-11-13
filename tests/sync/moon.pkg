@@ -7,6 +7,7 @@ import {
   "moonbitlang/core/async/fs",
   "moonbitlang/core/debug",
   "moonbitlang/core/env",
+  "moonbitlang/core/test",
 } for "test"
 
 options(
