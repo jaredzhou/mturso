@@ -180,41 +180,110 @@ async test "慢 execute 不阻塞另一个连接上的快查询" {
 }
 
 ///|
-async test "类型化行集：整数/浮点/文本/blob/null 按类型取到，不再是 TSV 文本" {
+async test "类型化行集：内建类型按类型往返，不再是 TSV 文本" {
   let db = @mturso.Database::open(":memory:")
   defer db.close()
   let conn = db.connect()
   defer conn.close()
+  let create_sql =
+    #|create table typed(
+    #|  flag integer, i integer, i64 integer, byte integer, i16 integer,
+    #|  u integer, u16 integer, u64 integer, f real, d real,
+    #|  s text, c text, b blob, nullable integer, present integer,
+    #|  ts text, doc text
+    #|)
+  ignore(conn.execute(create_sql))
+  let document : Json = @json.parse("{\"kind\":\"typed\",\"n\":7}")
+  let insert_sql =
+    #|insert into typed values (
+    #|  ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
+    #|  ?11, ?12, ?13, ?14, ?15, ?16, ?17
+    #|)
   ignore(
     conn.execute(
-      "create table t(i integer, r real, s text, b blob, n integer)",
+      insert_sql,
+      params=[
+        true,
+        (42 : Int),
+        (9_000_000_000L : Int64),
+        (200 : Byte),
+        (-1234 : Int16),
+        (3 : UInt),
+        (65_000 : UInt16),
+        (5 : UInt64),
+        (1.25 : Float),
+        2.5,
+        "hello",
+        'Z',
+        b"\x00\xff",
+        (None : Int?),
+        (Some(7) : Int?),
+        @mturso.Timestamp("2026-11-13T12:34:56Z"),
+        document,
+      ],
     ),
   )
-  ignore(
-    conn.execute(
-      "insert into t values (42, 1.5, 'hi', x'0102', null)",
-    ),
-  )
-  let rows = conn.query("select i, r, s, b, n from t")
+  let select_sql =
+    #|select flag, i, i64, byte, i16, u, u16, u64, f, d,
+    #|       s, c, b, nullable, present, ts, doc
+    #|from typed
+  let rows = conn.query(select_sql)
   defer rows.close()
   let cols = rows.columns()
-  assert_true(cols.length() == 5)
-  assert_true(cols[0].name == "i")
+  assert_true(cols.length() == 17)
+  assert_true(cols[0].name == "flag")
+  assert_true(cols[1].name == "i")
   assert_true(cols[0].decltype.length() > 0)
   assert_true(rows.has_next())
   let row = rows.get_row()
-  let i : Int = row.get(0)
+  assert_true(row.len() == 17)
+  let flag : Bool = row.get(0)
+  assert_true(flag)
+  let i : Int = row.get(1)
   assert_true(i == 42)
-  let r : Double = row.get(1)
-  assert_true(r == 1.5)
-  let s : String = row.get(2)
-  assert_true(s == "hi")
+  let i64 : Int64 = row.get(2)
+  assert_true(i64 == 9_000_000_000L)
+  let byte : Byte = row.get(3)
+  assert_true(byte == (200 : Byte))
+  let i16 : Int16 = row.get(4)
+  assert_true(i16 == (-1234 : Int16))
+  let u : UInt = row.get(5)
+  assert_true(u == (3 : UInt))
+  let u16 : UInt16 = row.get(6)
+  assert_true(u16 == (65_000 : UInt16))
+  let u64 : UInt64 = row.get(7)
+  assert_true(u64 == (5 : UInt64))
+  let f : Float = row.get(8)
+  assert_true(f == (1.25 : Float))
+  let d : Double = row.get(9)
+  assert_true(d == 2.5)
+  let s : String = row.get(10)
+  assert_true(s == "hello")
   let by_name : String = row.get_by_name("s")
-  assert_true(by_name == "hi")
-  let b : Bytes = row.get(3)
-  assert_true(b == b"\x01\x02")
-  assert_true(row.value(4) == @mturso.Value::Null)
+  assert_true(by_name == "hello")
+  let c : Char = row.get(11)
+  assert_true(c == 'Z')
+  let b : Bytes = row.get(12)
+  assert_true(b == b"\x00\xff")
+  let nullable : Int? = row.get(13)
+  assert_true(nullable is None)
+  assert_true(row.value(13) == @mturso.Value::Null)
+  let present : Int? = row.get_by_name("present")
+  assert_true(present == Some(7))
+  let ts : @mturso.Timestamp = row.get(15)
+  assert_true(ts == @mturso.Timestamp("2026-11-13T12:34:56Z"))
+  let doc : Json = row.get(16)
+  assert_true(doc.stringify() == document.stringify())
   assert_true(!rows.has_next())
+
+  let projected : Array[(Int, String, Bytes, Int?)] = conn.fetch(
+    "select i, s, b, nullable from typed",
+  )
+  assert_true(projected.length() == 1)
+  assert_true(projected[0].0 == 42)
+  assert_true(projected[0].1 == "hello")
+  assert_true(projected[0].2 == b"\x00\xff")
+  assert_true(projected[0].3 is None)
 
   let error = @test.expect_error(() => {
     let _missing : String = row.get_by_name("missing")
