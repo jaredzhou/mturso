@@ -652,8 +652,15 @@ async test "#6 retry_tx 在真实 MVCC 冲突后重试成功" {
               }
               ignore(tx.execute("update t set v = 2 where id = 1"))
             } else {
-              while !released {
-                release_ready.wait()
+              try @async.with_timeout(5_000, async fn() {
+                while !released {
+                  release_ready.wait()
+                }
+              }) catch {
+                error =>
+                  abort(
+                    "timed out waiting for retry release: \{@debug.to_string(error)}",
+                  )
               }
               ignore(tx.execute("update t set v = 2 where id = 1"))
             }
@@ -668,8 +675,15 @@ async test "#6 retry_tx 在真实 MVCC 冲突后重试成功" {
       )
       done = true
     })
-    while !saw_conflict {
-      conflict_ready.wait()
+    try @async.with_timeout(5_000, async fn() {
+      while !saw_conflict {
+        conflict_ready.wait()
+      }
+    }) catch {
+      error =>
+        abort(
+          "timed out waiting for retry conflict: \{@debug.to_string(error)}",
+        )
     }
     tx1.commit()
     released = true
