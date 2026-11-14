@@ -8,32 +8,85 @@ MoonBit bindings for [Turso](https://turso.tech) — the Rust rewrite of SQLite 
 
 `Database` is a database **and its connection pool**; `Connection` is one checkout from that pool. Queries are typed and streamed row by row, so a large result set never has to be materialised up front. The async API keeps the event loop free while a statement runs.
 
+## Quickstart
+
+### Local database
+
 ```moonbit
 async fn main {
-  let db = @mturso.Database::open(":memory:")
+  let db = @mturso.Database::open(":memory:")     // or a file path
   defer db.close()
+
   ignore(db.execute("create table t(id integer primary key, name text)"))
-  ignore(db.execute("insert into t(name) values ('alice'), ('bob')"))
+
+  // Explicit checkout. `close()` returns the connection to the pool.
+  let conn = db.connect()
+  defer conn.close()
+
+  ignore(conn.execute(
+    "insert into t(name) values (?1), (?2)",
+    params=["alice", "bob"],
+  ))
+
+  // Pull rows one at a time.
+  let rows = conn.query("select id, name from t order by id")
+  defer rows.close()
+  while rows.has_next() {
+    let row = rows.get_row()
+    let id : Int = row.get(0)
+    let name : String = row.get(1)
+    println("\{id}: \{name}")
+  }
+}
+```
+
+### Remote sync
+
+Connect a local replica to a Turso-compatible remote. The first open bootstraps
+the replica; later pushes and pulls synchronize changes incrementally.
+
+```moonbit
+async fn sync_example() -> Unit raise @mturso.TursoError {
+  let config = @mturso.SyncConfig::new(
+    "./notes.db",
+    remote_url="https://your-database.turso.io",
+    auth_token=Some("your-token"),
+  )
+  let db = @mturso.SyncDatabase::open(config)
+  defer db.close()
 
   let conn = db.connect()
   defer conn.close()
-  let users : Array[(Int, String)] = conn.fetch("select id, name from t order by id")
-  println(users)   // [(1, "alice"), (2, "bob")]
+
+  ignore(
+    conn.execute(
+      "create table if not exists notes(id integer primary key, body text)",
+    ),
+  )
+  ignore(
+    conn.execute(
+      "insert into notes(body) values (?1)",
+      params=["written locally"],
+    ),
+  )
+
+  db.push()
+  let changed = db.pull()
+  let stats = db.stats()
+  println("changed=\{changed}, revision=\{stats.revision}")
 }
 ```
 
 ## Features
 
-- **Query APIs with explicit result shapes** — `query` returns a pull-based `Rows` reader for row-by-row iteration; `query_one` returns exactly one `Row` (or `NoRows`); both expose columns through the `FromValue` decoding contract. `fetch` and `fetch_one` build on the same model, collecting rows into `Array[T]` or one `T` through `FromRow`. `execute` is the DDL/DML entry point, uses Turso's dedicated execute ABI, and returns `ExecResult` with affected rows. The call site always says whether you want a stream, one row, a typed collection, or only execution status.
-- **Bind values safely with `ToValue`** — pass `params=[...]` and let `ToValue` encode integers, floats, strings, blobs, options, JSON, timestamps and tuples; `FromValue` / `FromRow` decode them back. No SQL string building.
-- **Built-in connection pool** — `Database` is the pool: `max_conns` caps concurrency, `db.query` / `db.execute` borrow a connection automatically, `db.connect()` checks one out explicitly, and `db.stats()` shows contention.
-- **First-class transactions** — `begin_tx` / `commit` / `rollback`, with `Deferred`, `Immediate`, `Exclusive`, and Turso's `BEGIN CONCURRENT`; `begin_func` commits on success and rolls back on error.
-- **Async without blocking the event loop** — every connection runs on its own external C worker thread, so slow queries and execute jobs never freeze the MoonBit event loop; `max_conns` keeps that thread budget under control.
-- **Retries that understand contention** — `retry_tx` reruns a whole transaction on `Busy` (WAL write lock) or `Conflict` (MVCC write-write), with full-jitter backoff and a bounded budget.
-- **Offline-first sync** — `SyncDatabase` wraps Turso's sync engine with `push`, `pull`, `checkpoint`, and `stats`; SQL reads and transactions use the same public `Connection`.
-- **Errors you can match on** — `TursoError` separates connection, query, no-rows, busy, and conflict failures.
-- **Deterministic shutdown** — `close()` joins worker threads, and `db.close()` cascades to every pooled connection.
-- **No separate engine install** — the Turso library ships with the binding and is loaded at runtime; consumers never write linker flags.
+- **SQLite-compatible SQL, in process** — use familiar SQL against file or in-memory databases, with SQLite-compatible storage and no separate database process to manage.
+- **Typed queries and safe parameters** — read integers, floats, text, blobs, `NULL`, JSON, and timestamps as native values, stream large result sets, and bind parameters without constructing SQL strings.
+- **Async by default** — slow queries and writes run off the MoonBit event loop, while independent connections continue to make progress.
+- **Bounded connection pooling** — cap concurrent connections and worker threads, reuse connections automatically, or hold one for a longer unit of work, with contention statistics available.
+- **Transactions and contention handling** — use explicit or managed transactions, including deferred, immediate, exclusive, read-only, and MVCC concurrent modes, plus retry helpers for busy locks and write conflicts.
+- **Offline-first remote sync** — bootstrap a local replica from a Turso-compatible remote, keep working offline, push local commits, pull incremental changes, and inspect or checkpoint sync state.
+- **Self-hosted sync server** — run against the pinned `tursodb` server or this project's native implementation, with SQL access, bootstrap, pull, push, and optional bearer authentication. The server is tested with both this client and the official Go sync client.
+- **Runtime-loaded native engine** — Linux x86_64 and Windows x64 packages include the Turso library and load it at runtime, so consumers do not need linker flags; tested macOS arm64 and Linux aarch64 builds fetch the matching library with one script.
 
 ## Platform support
 
@@ -49,21 +102,13 @@ macOS x86_64 is deliberately absent (MoonBit ships no `darwin-x86_64` toolchain)
 
 ## Installation
 
-Not on mooncakes yet, so consume it from source through a **workspace**:
+Add the package from Mooncakes, pinned to the first release:
 
 ```bash
-git clone git@github.com:jaredzhou/mturso.git
-cd your-project
-moon work init /path/to/mturso .        # put mturso and your module in one workspace
+moon add jaredzhou/mturso@0.1.0
 ```
 
-If the project already has a workspace, add mturso to it instead:
-
-```bash
-moon work use /path/to/mturso
-```
-
-Your `moon.mod`:
+Or add the dependency directly in your `moon.mod`:
 
 ```toml
 import {
@@ -135,36 +180,6 @@ MTURSO_LIB_PATH=/opt/mturso/libturso_sync_sdk_kit.so ./your-app
 Use the `.dylib` name on macOS. When `MTURSO_LIB_PATH` is set, it is the only
 file attempted. A bad path fails immediately with the path and dynamic-loader
 error rather than silently loading another copy.
-
-## Quickstart
-
-```moonbit
-async fn main {
-  let db = @mturso.Database::open(":memory:")     // or a file path
-  defer db.close()
-
-  ignore(db.execute("create table t(id integer primary key, name text)"))
-
-  // Explicit checkout. `close()` returns the connection to the pool.
-  let conn = db.connect()
-  defer conn.close()
-
-  ignore(conn.execute(
-    "insert into t(name) values (?1), (?2)",
-    params=["alice", "bob"],
-  ))
-
-  // Pull rows one at a time.
-  let rows = conn.query("select id, name from t order by id")
-  defer rows.close()
-  while rows.has_next() {
-    let row = rows.get_row()
-    let id : Int = row.get(0)
-    let name : String = row.get(1)
-    println("\{id}: \{name}")
-  }
-}
-```
 
 ## Usage
 
