@@ -71,11 +71,11 @@ async fn Connection::open_rows(
     conn: self.raw,
     sync_io: self.sync_io,
     release,
-    pending: Ref(None),
-    pending_raw: Ref(None),
-    changes: Ref(0L),
-    done: Ref(false),
-    closed: Ref(false),
+    pending: None,
+    pending_raw: None,
+    changes: 0L,
+    done: false,
+    closed: false,
   }
 }
 
@@ -112,7 +112,7 @@ async fn Connection::await_execute(
         if payload.length() < 8 {
           raise TursoError::QueryError("truncated execute result")
         }
-        let rd : Rd = { b: payload, p: Ref(0), }
+        let rd : Rd = { b: payload, p: 0, }
         return rd.i64()
       }
       3 => raise stream_error(payload)

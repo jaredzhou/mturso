@@ -27,13 +27,13 @@ pub struct Database {
   priv raw : @ffi.Db
   priv max_conns : Int
   priv idle : Array[@ffi.Conn]
-  priv idle_len : Ref[Int]
+  priv mut idle_len : Int
   priv busy : Array[@ffi.Conn?]
   priv sem : @async.Semaphore
-  priv stats : Ref[PoolStats]
-  priv journal_mode : Ref[JournalMode]
-  priv default_tx_mode : Ref[TxMode]
-  priv closed : Ref[Bool]
+  priv mut stats : PoolStats
+  priv mut journal_mode : JournalMode
+  priv mut default_tx_mode : TxMode
+  priv mut closed : Bool
 }
 
 ///|
@@ -48,7 +48,7 @@ priv struct ConnectionLifetime {
 pub struct Connection {
   priv raw : @ffi.Conn
   priv mut lifetime : ConnectionLifetime
-  priv closed : Ref[Bool]
+  priv mut closed : Bool
   priv sync_io : SyncIoContext?
 }
 
@@ -89,17 +89,17 @@ pub fn Database::open(path : String, max_conns? : Int = 4) -> Database raise Tur
     raw,
     max_conns: n,
     idle: [],
-    idle_len: Ref(0),
+    idle_len: 0,
     busy: [],
     sem: @async.Semaphore::Semaphore(n),
-    stats: Ref({
+    stats: {
       acquire_count: 0L,
       acquire_wait_count: 0L,
       acquire_wait_duration_ms: 0L,
-    }),
-    journal_mode: Ref(JournalMode::Wal),
-    default_tx_mode: Ref(TxMode::Deferred),
-    closed: Ref(false),
+    },
+    journal_mode: JournalMode::Wal,
+    default_tx_mode: TxMode::Deferred,
+    closed: false,
   }
 }
 
@@ -112,8 +112,8 @@ pub async fn Connection::open(path : String) -> Connection raise TursoError {
   let conn = db.connect()
   conn.lifetime = {
     release: () => db.close(),
-    is_closed: () => db.closed.val,
-    default_tx_mode: () => db.default_tx_mode.val,
+    is_closed: () => db.closed,
+    default_tx_mode: () => db.default_tx_mode,
   }
   conn
 }
@@ -124,28 +124,28 @@ fn Database::release_connection(
   raw : @ffi.Conn,
   busy_index : Int,
 ) -> Unit {
-  if self.closed.val {
+  if self.closed {
     return
   }
   self.busy[busy_index] = None
-  if self.idle_len.val < self.idle.length() {
-    self.idle[self.idle_len.val] = raw
+  if self.idle_len < self.idle.length() {
+    self.idle[self.idle_len] = raw
   } else {
     self.idle.push(raw)
   }
-  self.idle_len.val = self.idle_len.val + 1
+  self.idle_len = self.idle_len + 1
   self.sem.release()
 }
 
 ///|
 /// 从池里取一条连接：优先复用 idle；否则新建（受 `max_conns` 限制，满了等待）。
 pub async fn Database::connect(self : Database) -> Connection raise TursoError {
-  if self.closed.val {
+  if self.closed {
     raise TursoError::ConnectionError("database is closed")
   }
   if self.sem.try_acquire() {
-    let st = self.stats.val
-    self.stats.val = {
+    let st = self.stats
+    self.stats = {
       acquire_count: st.acquire_count + 1L,
       acquire_wait_count: st.acquire_wait_count,
       acquire_wait_duration_ms: st.acquire_wait_duration_ms,
@@ -154,16 +154,16 @@ pub async fn Database::connect(self : Database) -> Connection raise TursoError {
     let t0 = @async.now()
     self.sem.acquire()
     let waited = @async.now() - t0
-    let st = self.stats.val
-    self.stats.val = {
+    let st = self.stats
+    self.stats = {
       acquire_count: st.acquire_count + 1L,
       acquire_wait_count: st.acquire_wait_count + 1L,
       acquire_wait_duration_ms: st.acquire_wait_duration_ms + waited,
     }
   }
-  let raw = if self.idle_len.val > 0 {
-    self.idle_len.val = self.idle_len.val - 1
-    self.idle[self.idle_len.val]
+  let raw = if self.idle_len > 0 {
+    self.idle_len = self.idle_len - 1
+    self.idle[self.idle_len]
   } else {
     let r = @ffi.db_connect(self.raw)
     check_error()
@@ -175,10 +175,10 @@ pub async fn Database::connect(self : Database) -> Connection raise TursoError {
     raw,
     lifetime: {
       release: () => self.release_connection(raw, idx),
-      is_closed: () => self.closed.val,
-      default_tx_mode: () => self.default_tx_mode.val,
+      is_closed: () => self.closed,
+      default_tx_mode: () => self.default_tx_mode,
     },
-    closed: Ref(false),
+    closed: false,
     sync_io: None,
   }
 }
@@ -186,23 +186,23 @@ pub async fn Database::connect(self : Database) -> Connection raise TursoError {
 ///|
 /// 关闭连接 = **还回池**（幂等；不是销毁）。
 pub fn Connection::close(self : Connection) -> Unit {
-  if self.closed.val {
+  if self.closed {
     return
   }
-  self.closed.val = true
+  self.closed = true
   (self.lifetime.release)()
 }
 
 ///|
 /// 连接是否已关闭（已还回池也算关闭）。
 pub fn Connection::is_closed(self : Connection) -> Bool {
-  self.closed.val
+  self.closed
 }
 
 ///|
 /// 使用前检查：连接已还回 / 库已关 → `ConnectionError`。
 fn Connection::ensure_open(self : Connection) -> Unit raise TursoError {
-  if self.closed.val || (self.lifetime.is_closed)() {
+  if self.closed || (self.lifetime.is_closed)() {
     raise TursoError::ConnectionError("connection is closed")
   }
 }
@@ -246,11 +246,11 @@ pub async fn Connection::sqlite_version(
 /// 关闭数据库（幂等）：**级联**关掉 idle 和 busy 里的所有连接（join 各自 worker），
 /// 再 `turso_database_deinit`。
 pub fn Database::close(self : Database) -> Unit {
-  if self.closed.val {
+  if self.closed {
     return
   }
-  self.closed.val = true
-  for i in 0..<self.idle_len.val {
+  self.closed = true
+  for i in 0..<self.idle_len {
     @ffi.conn_close(self.idle[i])
   }
   for i in 0..<self.busy.length() {
@@ -265,7 +265,7 @@ pub fn Database::close(self : Database) -> Unit {
 ///|
 /// 数据库是否已关闭。
 pub fn Database::is_closed(self : Database) -> Bool {
-  self.closed.val
+  self.closed
 }
 
 ///|
@@ -275,10 +275,10 @@ pub fn Database::set_journal_mode(
   self : Database,
   mode : JournalMode,
 ) -> Unit raise TursoError {
-  if self.closed.val {
+  if self.closed {
     raise TursoError::ConnectionError("database is closed")
   }
-  if self.journal_mode.val == mode {
+  if self.journal_mode == mode {
     return
   }
   let raw = @ffi.db_connect(self.raw)
@@ -290,8 +290,8 @@ pub fn Database::set_journal_mode(
   }
   ignore(@ffi.conn_exec(raw, @utf8.encode(pragma)))
   check_error()
-  self.journal_mode.val = mode
-  self.default_tx_mode.val = match mode {
+  self.journal_mode = mode
+  self.default_tx_mode = match mode {
     JournalMode::Wal => TxMode::Deferred
     JournalMode::Mvcc => TxMode::Concurrent
   }
@@ -300,11 +300,11 @@ pub fn Database::set_journal_mode(
 ///|
 /// 覆盖后续 `begin_tx(mode=None)` 使用的默认事务模式。
 pub fn Database::set_default_tx_mode(self : Database, mode : TxMode) -> Unit {
-  self.default_tx_mode.val = mode
+  self.default_tx_mode = mode
 }
 
 ///|
 /// 当前默认事务模式。
 pub fn Database::default_tx_mode(self : Database) -> TxMode {
-  self.default_tx_mode.val
+  self.default_tx_mode
 }

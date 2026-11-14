@@ -12,7 +12,7 @@ pub(all) struct PoolStats {
 ///|
 /// 池统计快照。
 pub fn Database::stats(self : Database) -> PoolStats {
-  self.stats.val
+  self.stats
 }
 
 ///|

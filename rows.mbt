@@ -21,37 +21,37 @@ pub struct ResultRows {
   conn : @ffi.Conn
   priv sync_io : SyncIoContext?
   release : Connection?
-  pending : Ref[Array[@value.Value]?]
-  pending_raw : Ref[Array[Bytes]?]
-  changes : Ref[Int64]
-  done : Ref[Bool]
-  closed : Ref[Bool]
+  mut pending : Array[@value.Value]?
+  mut pending_raw : Array[Bytes]?
+  mut changes : Int64
+  mut done : Bool
+  mut closed : Bool
 }
 
 ///|
 pub impl Rows for ResultRows with fn has_next(self) {
   for ;; {
-    if self.closed.val || self.done.val {
+    if self.closed || self.done {
       return false
     }
     let (tag, payload) = read_frame(self.stream)
     match tag {
       0 => {
-        self.done.val = true
+        self.done = true
         if payload.length() >= 8 {
-          let rd : Rd = { b: payload, p: Ref(0), }
-          self.changes.val = rd.i64()
+          let rd : Rd = { b: payload, p: 0, }
+          self.changes = rd.i64()
         }
         return false
       }
       2 => {
         let (values, raws) = parse_cells(payload, self.columns.length())
-        self.pending.val = Some(values)
-        self.pending_raw.val = Some(raws)
+        self.pending = Some(values)
+        self.pending_raw = Some(raws)
         return true
       }
       3 => {
-        self.done.val = true
+        self.done = true
         raise stream_error(payload)
       }
       4 =>
@@ -62,14 +62,14 @@ pub impl Rows for ResultRows with fn has_next(self) {
             continue
           }
           None => {
-            self.done.val = true
+            self.done = true
             raise TursoError::ConnectionError(
               "sync I/O requested by a local connection",
             )
           }
         }
       _ => {
-        self.done.val = true
+        self.done = true
         raise TursoError::QueryError("unexpected frame tag \{tag}")
       }
     }
@@ -78,14 +78,14 @@ pub impl Rows for ResultRows with fn has_next(self) {
 
 ///|
 pub impl Rows for ResultRows with fn get_row(self) {
-  match self.pending.val {
+  match self.pending {
     Some(values) => {
-      self.pending.val = None
-      let raws = match self.pending_raw.val {
+      self.pending = None
+      let raws = match self.pending_raw {
         Some(r) => r
         None => []
       }
-      self.pending_raw.val = None
+      self.pending_raw = None
       { values, columns: self.columns, raw: raws, }
     }
     None =>
@@ -100,13 +100,13 @@ pub impl Rows for ResultRows with fn columns(self) {
 
 ///|
 pub impl Rows for ResultRows with fn changes(self) {
-  self.changes.val
+  self.changes
 }
 
 ///|
 pub impl Rows for ResultRows with fn close(self) {
-  if !self.closed.val {
-    self.closed.val = true
+  if !self.closed {
+    self.closed = true
     // 关掉读端：worker 的 write 会拿到 EPIPE，立刻停下（这就是取消）
     self.stream.close()
     @ffi.conn_resume_sync_io(self.conn)
@@ -131,16 +131,16 @@ pub extend ResultRows with Rows::{has_next, get_row, columns, changes, close}
 ///|
 priv struct Rd {
   b : Bytes
-  p : Ref[Int]
+  mut p : Int
 }
 
 ///|
 fn Rd::u8(self : Rd) -> Int raise TursoError {
-  if self.p.val >= self.b.length() {
+  if self.p >= self.b.length() {
     raise TursoError::QueryError("truncated result buffer")
   }
-  let v = self.b[self.p.val].to_int()
-  self.p.val = self.p.val + 1
+  let v = self.b[self.p].to_int()
+  self.p = self.p + 1
   v
 }
 
@@ -170,11 +170,11 @@ fn Rd::f64(self : Rd) -> Double raise TursoError {
 ///|
 fn Rd::bytes(self : Rd) -> Bytes raise TursoError {
   let n = self.u32()
-  if self.p.val + n > self.b.length() {
+  if self.p + n > self.b.length() {
     raise TursoError::QueryError("truncated result buffer")
   }
-  let out = self.b[self.p.val:self.p.val + n].to_owned()
-  self.p.val = self.p.val + n
+  let out = self.b[self.p:self.p + n].to_owned()
+  self.p = self.p + n
   out
 }
 
@@ -206,7 +206,7 @@ fn stream_error(payload : Bytes) -> TursoError {
 
 ///|
 fn parse_columns(payload : Bytes) -> Array[@value.Column] raise TursoError {
-  let rd : Rd = { b: payload, p: Ref(0), }
+  let rd : Rd = { b: payload, p: 0, }
   let n = rd.u32()
   let cols : Array[@value.Column] = []
   for _ in 0..<n {
@@ -222,7 +222,7 @@ fn parse_cells(
   payload : Bytes,
   n_cols : Int,
 ) -> (Array[@value.Value], Array[Bytes]) raise TursoError {
-  let rd : Rd = { b: payload, p: Ref(0), }
+  let rd : Rd = { b: payload, p: 0, }
   let vals : Array[@value.Value] = []
   let raws : Array[Bytes] = []
   for _ in 0..<n_cols {

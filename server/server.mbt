@@ -46,7 +46,7 @@ pub fn SyncServerConfig::new(
 pub struct SyncServer {
   priv process : @process.OrphanProcess
   priv base_url : String
-  priv closed : Ref[Bool]
+  priv mut closed : Bool
 }
 
 ///|
@@ -373,7 +373,7 @@ pub async fn SyncServer::start(
       )
     }
   }
-  { process, base_url: "http://\{address}", closed: Ref(false), }
+  { process, base_url: "http://\{address}", closed: false, }
 }
 
 ///|
@@ -383,7 +383,7 @@ pub fn SyncServer::base_url(self : SyncServer) -> String {
 
 ///|
 pub async fn SyncServer::wait(self : SyncServer) -> Int {
-  if self.closed.val {
+  if self.closed {
     return 0
   }
   let code = try self.process.wait() catch {
@@ -391,16 +391,16 @@ pub async fn SyncServer::wait(self : SyncServer) -> Int {
   } noraise {
     value => value
   }
-  self.closed.val = true
+  self.closed = true
   self.process.close()
   code
 }
 
 ///|
 pub async fn SyncServer::stop(self : SyncServer) -> Unit {
-  if self.closed.val {
+  if self.closed {
     return
   }
-  self.closed.val = true
+  self.closed = true
   @async.protect_from_cancel(async fn() { terminate_process(self.process) })
 }

@@ -47,7 +47,7 @@ pub(open) trait TxBeginner {
 /// 具体事务。`begin_tx` 返回它，所以事务里的调用都是 dot 调用。
 pub struct DbTx {
   priv conn : Connection
-  priv done : Ref[Bool]
+  priv mut done : Bool
   priv read_only : Bool
   /// 池上开的事务：commit/rollback 后把连接还回池。
   priv release_pool_conn : Bool
@@ -55,7 +55,7 @@ pub struct DbTx {
 
 ///|
 fn DbTx::ensure_active(self : DbTx) -> Unit raise TursoError {
-  if self.done.val {
+  if self.done {
     raise TursoError::QueryError("transaction already finished")
   }
   self.conn.ensure_open()
@@ -93,10 +93,10 @@ pub impl QueryExecutor for DbTx with execute(
 
 ///|
 pub impl Tx for DbTx with commit(self) -> Unit raise TursoError {
-  if self.done.val {
+  if self.done {
     raise TursoError::QueryError("transaction already finished")
   }
-  self.done.val = true
+  self.done = true
   defer {
     if self.release_pool_conn {
       self.conn.close()
@@ -110,10 +110,10 @@ pub impl Tx for DbTx with commit(self) -> Unit raise TursoError {
 
 ///|
 pub impl Tx for DbTx with rollback(self) -> Unit raise TursoError {
-  if self.done.val {
+  if self.done {
     raise TursoError::QueryError("transaction already finished")
   }
-  self.done.val = true
+  self.done = true
   defer {
     if self.release_pool_conn {
       self.conn.close()
@@ -174,7 +174,7 @@ async fn Connection::begin_tx_internal(
   ignore(self.execute(sql))
   DbTx::{
     conn: self,
-    done: Ref(false),
+    done: false,
     read_only,
     release_pool_conn,
   }

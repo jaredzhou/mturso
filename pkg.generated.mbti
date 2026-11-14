@@ -61,8 +61,8 @@ pub async fn Database::connect(Self) -> Connection raise TursoError
 pub fn Database::default_tx_mode(Self) -> TxMode
 pub async fn Database::execute(Self, String, params? : Array[&ToValue]) -> ExecResult raise TursoError
 pub fn Database::is_closed(Self) -> Bool
-pub fn Database::max_conns(Self) -> Int
-pub fn Database::open(String, max_conns? : Int) -> Self raise TursoError
+pub fn Database::max_conns(Self) -> Int32
+pub fn Database::open(String, max_conns? : Int32) -> Self raise TursoError
 pub async fn Database::query(Self, String, params? : Array[&ToValue]) -> &Rows raise TursoError
 pub async fn Database::query_one(Self, String, params? : Array[&ToValue]) -> Row raise TursoError
 pub fn Database::set_default_tx_mode(Self, TxMode) -> Unit
@@ -85,7 +85,7 @@ pub impl Tx for DbTx
 pub struct ExecResult {
   changes : Int64
 }
-pub fn ExecResult::affected_rows(Self) -> Int
+pub fn ExecResult::affected_rows(Self) -> Int32
 
 #derive(Eq, @debug.Debug)
 pub(all) enum JournalMode {
@@ -106,11 +106,11 @@ pub struct ResultRows {
   stmt : @ffi.Stmt
   conn : @ffi.Conn
   release : Connection?
-  pending : @ref.Ref[Array[@value.Value]?]
-  pending_raw : @ref.Ref[Array[Bytes]?]
-  changes : @ref.Ref[Int64]
-  done : @ref.Ref[Bool]
-  closed : @ref.Ref[Bool]
+  mut pending : Array[@value.Value]?
+  mut pending_raw : Array[Bytes]?
+  mut changes : Int64
+  mut done : Bool
+  mut closed : Bool
   // private fields
 }
 pub fn ResultRows::changes(Self) -> Int64
@@ -122,10 +122,10 @@ pub impl Rows for ResultRows
 
 #derive(Eq, @debug.Debug)
 pub(all) struct RetryOptions {
-  attempts : Int
-  base_delay_ms : Int
-  max_delay_ms : Int
-  budget_ms : Int?
+  attempts : Int32
+  base_delay_ms : Int32
+  max_delay_ms : Int32
+  budget_ms : Int32?
 }
 pub fn RetryOptions::default() -> Self
 
@@ -135,16 +135,16 @@ pub struct Row {
   raw : Array[Bytes]
 }
 pub fn Row::columns(Self) -> Array[@value.Column]
-pub fn[T : FromValue] Row::get(Self, Int) -> T raise TursoError
+pub fn[T : FromValue] Row::get(Self, Int32) -> T raise TursoError
 pub fn[T : FromValue] Row::get_by_name(Self, String) -> T raise TursoError
-pub fn Row::len(Self) -> Int
-pub fn Row::value(Self, Int) -> @value.Value
-pub fn Row::value_raw(Self, Int) -> Bytes
+pub fn Row::len(Self) -> Int32
+pub fn Row::value(Self, Int32) -> @value.Value
+pub fn Row::value_raw(Self, Int32) -> Bytes
 
 pub struct SyncConfig {
   // private fields
 }
-pub fn SyncConfig::new(String, remote_url~ : String, auth_token? : String?, client_name? : String?, long_poll_timeout_ms? : Int, bootstrap_if_empty? : Bool, max_conns? : Int) -> Self
+pub fn SyncConfig::new(String, remote_url~ : String, auth_token? : String?, client_name? : String?, long_poll_timeout_ms? : Int32, bootstrap_if_empty? : Bool, max_conns? : Int32) -> Self
 
 pub struct SyncDatabase {
   // private fields
@@ -223,10 +223,10 @@ pub(open) trait FromRow {
 pub impl FromRow for Bool
 pub impl FromRow for Byte
 pub impl FromRow for Char
-pub impl FromRow for Int
+pub impl FromRow for Int32
 pub impl FromRow for Int16
 pub impl FromRow for Int64
-pub impl FromRow for UInt
+pub impl FromRow for UInt32
 pub impl FromRow for UInt16
 pub impl FromRow for UInt64
 pub impl FromRow for Float
@@ -249,10 +249,10 @@ pub(open) trait FromValue {
 pub impl FromValue for Bool
 pub impl FromValue for Byte
 pub impl FromValue for Char
-pub impl FromValue for Int
+pub impl FromValue for Int32
 pub impl FromValue for Int16
 pub impl FromValue for Int64
-pub impl FromValue for UInt
+pub impl FromValue for UInt32
 pub impl FromValue for UInt16
 pub impl FromValue for UInt64
 pub impl FromValue for Float
@@ -288,10 +288,10 @@ pub impl ToValue for Unit
 pub impl ToValue for Bool
 pub impl ToValue for Byte
 pub impl ToValue for Char
-pub impl ToValue for Int
+pub impl ToValue for Int32
 pub impl ToValue for Int16
 pub impl ToValue for Int64
-pub impl ToValue for UInt
+pub impl ToValue for UInt32
 pub impl ToValue for UInt16
 pub impl ToValue for UInt64
 pub impl ToValue for Float
